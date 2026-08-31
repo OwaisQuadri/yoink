@@ -10,6 +10,15 @@ import {
   RELEVANT_RESOURCE_TYPES,
 } from '../lib/detector'
 import type { ExtensionMessage } from '../lib/messages'
+import {
+  chooseHelperFolder,
+  getHelperStatus,
+  pingHelper,
+  pollHelperStatus,
+  revealHelperOutput,
+  startHelperJob,
+  stopHelperJob,
+} from './helper'
 
 // tabId -> (candidateId -> candidate)
 const candidatesByTab = new Map<number, Map<string, StreamCandidate>>()
@@ -293,7 +302,41 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
     return true
   }
 
+  if (message.type === 'HELPER_PING') {
+    void pingHelper().then(sendResponse)
+    return true
+  }
+
+  if (message.type === 'HELPER_CHOOSE_FOLDER') {
+    void chooseHelperFolder().then(sendResponse)
+    return true
+  }
+
+  if (message.type === 'HELPER_START') {
+    void startHelperJob(message.sourceUrl, message.sourceTitle).then(sendResponse)
+    return true
+  }
+
+  if (message.type === 'HELPER_STATUS') {
+    void getHelperStatus(message.jobId).then(sendResponse)
+    return true
+  }
+
+  if (message.type === 'HELPER_STOP') {
+    void stopHelperJob(message.jobId).then(sendResponse)
+    return true
+  }
+
+  if (message.type === 'HELPER_REVEAL') {
+    void revealHelperOutput(message.jobId).then(sendResponse)
+    return true
+  }
+
   return undefined
+})
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === 'yoink-helper-poll') pollHelperStatus()
 })
 
 async function ensureOffscreenDocument() {
@@ -304,16 +347,26 @@ async function ensureOffscreenDocument() {
   await chrome.offscreen.createDocument({
     url: 'src/offscreen/offscreen.html',
     reasons: [chrome.offscreen.Reason.BLOBS],
-    justification: 'Fetch and remux video segments into a single downloadable file.',
+    justification: 'Remux downloaded HLS streams.',
   })
 }
 
 async function startDownload(candidate: StreamCandidate) {
+  const extension = candidate.kind === 'webm' ? 'webm' : 'mp4'
+  const filename = `yoink/${(candidate.pageTitle ?? 'video').replace(/[\\/:*?"<>|]/g, '_')}.${extension}`
+  if (candidate.kind === 'mp4' || candidate.kind === 'webm') {
+    await chrome.downloads.download({ url: candidate.url, filename, saveAs: false })
+    return
+  }
+
   await ensureOffscreenDocument()
-  const filename = `yoink/${(candidate.pageTitle ?? 'video').replace(/[\\/:*?"<>|]/g, '_')}.mp4`
-  await chrome.runtime.sendMessage({
+  const response = await chrome.runtime.sendMessage({
     type: 'OFFSCREEN_RUN_JOB',
     candidate,
     filename,
-  })
+  }) as { ok: boolean; blobUrl?: string; error?: string }
+  if (!response?.ok || !response.blobUrl) {
+    throw new Error(response?.error ?? 'The offscreen download job did not return a file.')
+  }
+  await chrome.downloads.download({ url: response.blobUrl, filename, saveAs: false })
 }

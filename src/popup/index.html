@@ -8,8 +8,36 @@
   <body>
     <div id="app">
       <h1>Yoink</h1>
-      <ul id="candidate-list"></ul>
-      <p id="empty-state">No video detected on this page yet.</p>
+
+      <section id="helper" class="panel">
+        <div class="section-heading">
+          <h2>Background download</h2>
+          <button id="folder-settings" class="link-button" type="button">Choose folder</button>
+        </div>
+        <p id="folder-status" class="muted">Checking the local helper…</p>
+        <p id="helper-status" class="status-line">Connecting to the local helper…</p>
+        <dl id="selection-details" hidden>
+          <div><dt>Server</dt><dd id="selected-server">—</dd></div>
+          <div><dt>Quality</dt><dd id="selected-quality">—</dd></div>
+          <div><dt>Subtitles</dt><dd id="selected-subtitles">—</dd></div>
+        </dl>
+        <div id="helper-progress" hidden>
+          <progress id="progress-bar" max="100" value="0"></progress>
+          <p id="progress-text" class="muted"></p>
+        </div>
+        <div class="actions">
+          <button id="start-button" type="button" disabled>Download in background</button>
+          <button id="stop-button" class="danger" type="button" hidden>Stop</button>
+          <button id="reveal-button" type="button" hidden>Show file</button>
+        </div>
+        <p id="helper-warning" class="warning" hidden></p>
+      </section>
+
+      <section class="downloads">
+        <h2>Detected streams</h2>
+        <ul id="candidate-list"></ul>
+        <p id="empty-state">No video detected on this page yet.</p>
+      </section>
     </div>
     <script type="module" src="./main.ts"></script>
   </body>

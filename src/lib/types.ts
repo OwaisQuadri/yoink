@@ -32,3 +32,90 @@ export type DownloadStatus =
   | { state: 'saving' }
   | { state: 'done'; filename: string }
   | { state: 'error'; message: string }
+
+export type HelperJobPhase =
+  | 'idle'
+  | 'validating'
+  | 'queued'
+  | 'launching-browser'
+  | 'navigating'
+  | 'discovering'
+  | 'probing'
+  | 'acquiring'
+  | 'stopping'
+  | 'finalizing'
+  | 'completed'
+  | 'cancelled'
+  | 'failed'
+  | 'interrupted'
+
+export interface HelperFolder {
+  configured: boolean
+  name?: string
+  writable?: boolean
+}
+
+export interface HelperSelection {
+  serverLabel?: string
+  qualityLabel?: string
+  width?: number
+  height?: number
+  bitrate?: number
+  subtitleLabel?: string
+  subtitleMode: 'selectable' | 'burned-in-or-none'
+  mediaKind: 'mp4' | 'webm' | 'hls' | 'dash'
+}
+
+export interface HelperProgress {
+  durationMs?: number
+  mediaTimeMs?: number
+  bytesWritten: number
+  bytesPerSecond?: number
+  estimatedRemainingMs?: number
+}
+
+export type HelperErrorCode =
+  | 'HELPER_NOT_INSTALLED'
+  | 'HELPER_OFFLINE'
+  | 'FOLDER_NOT_CONFIGURED'
+  | 'FOLDER_NOT_WRITABLE'
+  | 'BROWSER_UNAVAILABLE'
+  | 'FFMPEG_UNAVAILABLE'
+  | 'NO_PLAYABLE_MEDIA'
+  | 'PROTECTED_MEDIA'
+  | 'AUTH_EXPIRED'
+  | 'DOWNLOAD_ACTIVE'
+  | 'DOWNLOAD_FAILED'
+  | 'FINALIZE_FAILED'
+  | 'INVALID_REQUEST'
+
+export interface HelperJobSnapshot {
+  protocolVersion: 1
+  revision: number
+  jobId: string
+  phase: HelperJobPhase
+  sourceUrl: string
+  sourceTitle: string
+  selection?: HelperSelection
+  progress: HelperProgress
+  folder?: HelperFolder
+  outputFilename?: string
+  outputPath?: string
+  warning?: string
+  error?: { code: HelperErrorCode; message: string }
+  createdAt: number
+  updatedAt: number
+}
+
+export interface HelperHealth {
+  helperVersion: string
+  folder: HelperFolder
+}
+
+export interface HelperActionResponse {
+  ok: boolean
+  snapshot?: HelperJobSnapshot
+  health?: HelperHealth
+  folder?: HelperFolder
+  error?: { code: HelperErrorCode; message: string }
+}

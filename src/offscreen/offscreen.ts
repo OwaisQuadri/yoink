@@ -1,11 +1,11 @@
 import { FFmpeg } from '@ffmpeg/ffmpeg'
 import { fetchFile, toBlobURL } from '@ffmpeg/util'
+import type { ExtensionMessage } from '../lib/messages'
 import { parseM3U8, pickBestVariant } from '../lib/m3u8'
 import type { StreamCandidate } from '../lib/types'
 
 const FFMPEG_CORE_VERSION = '0.12.10'
 const FFMPEG_CORE_BASE = `https://unpkg.com/@ffmpeg/core@${FFMPEG_CORE_VERSION}/dist/esm`
-
 let ffmpegPromise: Promise<FFmpeg> | null = null
 
 async function getFFmpeg(): Promise<FFmpeg> {
@@ -22,30 +22,20 @@ async function getFFmpeg(): Promise<FFmpeg> {
   return ffmpegPromise
 }
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type !== 'OFFSCREEN_RUN_JOB') return undefined
-  void runJob(message.candidate, message.filename)
-    .then(() => sendResponse({ ok: true }))
-    .catch((err) => sendResponse({ ok: false, error: String(err?.message ?? err) }))
+chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendResponse) => {
+  if (message.type !== 'OFFSCREEN_RUN_JOB') return undefined
+  void runJob(message.candidate)
+    .then((blobUrl) => sendResponse({ ok: true, blobUrl }))
+    .catch((error) => sendResponse({ ok: false, error: String(error?.message ?? error) }))
   return true
 })
 
-async function runJob(candidate: StreamCandidate, filename: string) {
-  if (candidate.kind === 'mp4' || candidate.kind === 'webm') {
-    // Direct file: no remux needed, let chrome.downloads handle it directly.
-    await chrome.downloads.download({ url: candidate.url, filename, saveAs: false })
-    return
-  }
-
-  if (candidate.kind === 'hls') {
-    await runHlsJob(candidate, filename)
-    return
-  }
-
+async function runJob(candidate: StreamCandidate): Promise<string> {
+  if (candidate.kind === 'hls') return runHlsJob(candidate)
   throw new Error(`Unsupported stream kind: ${candidate.kind}`)
 }
 
-async function runHlsJob(candidate: StreamCandidate, filename: string) {
+async function runHlsJob(candidate: StreamCandidate): Promise<string> {
   let manifestUrl = candidate.url
   let manifestText = await (await fetch(manifestUrl)).text()
   let parsed = parseM3U8(manifestText, manifestUrl)
@@ -62,9 +52,7 @@ async function runHlsJob(candidate: StreamCandidate, filename: string) {
   if (parsed.encrypted) {
     throw new Error('Stream is DRM/encrypted (EXT-X-KEY present) — unsupported by design')
   }
-  if (parsed.segmentUrls.length === 0) {
-    throw new Error('No segments found in playlist')
-  }
+  if (parsed.segmentUrls.length === 0) throw new Error('No segments found in playlist')
 
   const ffmpeg = await getFFmpeg()
   const listFileLines: string[] = []
@@ -75,11 +63,9 @@ async function runHlsJob(candidate: StreamCandidate, filename: string) {
     listFileLines.push(`file '${segName}'`)
   }
   await ffmpeg.writeFile('list.txt', listFileLines.join('\n'))
-
   await ffmpeg.exec(['-f', 'concat', '-safe', '0', '-i', 'list.txt', '-c', 'copy', 'out.mp4'])
 
   const output = await ffmpeg.readFile('out.mp4')
   const blob = new Blob([new Uint8Array(output as Uint8Array).buffer], { type: 'video/mp4' })
-  const blobUrl = URL.createObjectURL(blob)
-  await chrome.downloads.download({ url: blobUrl, filename, saveAs: false })
+  return URL.createObjectURL(blob)
 }
