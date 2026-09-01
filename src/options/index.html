@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Yoink settings</title>
+    <link rel="stylesheet" href="./options.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Yoink settings</h1>
+      <section>
+        <h2>Local headless helper</h2>
+        <p id="helper-status">Checking the local helper…</p>
+        <p class="hint">
+          The helper runs a separate isolated browser. It never navigates, mutes, or captures your visible Chrome tab.
+        </p>
+      </section>
+      <section>
+        <h2>Download folder</h2>
+        <p id="folder-status">Checking the selected folder…</p>
+        <button id="choose-folder" type="button">Choose folder</button>
+        <p class="hint">Yoink remembers this folder and writes completed MP4 files there.</p>
+      </section>
+      <section>
+        <h2>Development installation</h2>
+        <p>Run <code>npm run helper:install</code> from the Yoink project, then reload the extension.</p>
+      </section>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
