@@ -35,10 +35,13 @@ export function parseRequest(input) {
     return input
   }
   if (input.op === 'status') {
-    assertExactKeys(input, new Set([...common, 'jobId', 'afterRevision']))
+    assertExactKeys(input, new Set([...common, 'jobId', 'afterRevision', 'tabId']))
     if (input.jobId !== undefined) assertText(input.jobId, 'jobId', 256)
     if (input.afterRevision !== undefined && (!Number.isInteger(input.afterRevision) || input.afterRevision < 0)) {
       throw new Error('afterRevision must be a non-negative integer.')
+    }
+    if (input.tabId !== undefined && (!Number.isInteger(input.tabId) || input.tabId < 0)) {
+      throw new Error('tabId must be a non-negative integer.')
     }
     return input
   }
@@ -48,10 +51,13 @@ export function parseRequest(input) {
     return input
   }
 
-  assertExactKeys(input, new Set([...common, 'idempotencyKey', 'sourceUrl', 'sourceTitle', 'options']))
+  assertExactKeys(input, new Set([...common, 'idempotencyKey', 'sourceUrl', 'sourceTitle', 'tabId', 'options']))
   assertText(input.idempotencyKey, 'idempotencyKey', 256)
   assertHttpUrl(input.sourceUrl)
   assertText(input.sourceTitle, 'sourceTitle', 1024)
+  if (input.tabId !== undefined && (!Number.isInteger(input.tabId) || input.tabId < 0)) {
+    throw new Error('tabId must be a non-negative integer.')
+  }
   assertObject(input.options, 'options')
   assertExactKeys(input.options, new Set(['preferResolution', 'preferredSubtitleLanguage']))
   if (input.options.preferResolution !== true) throw new Error('preferResolution must be true.')

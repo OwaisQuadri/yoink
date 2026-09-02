@@ -52,6 +52,9 @@ npm run build
 echo "Installing local helper..."
 npm run helper:install
 
+echo "Installing the yoink command..."
+npm run cli:install
+
 cat <<EOF
 
 Yoink installed.
@@ -63,6 +66,8 @@ Next steps:
        $DEST/dist
   4. Pin Yoink from the Extensions menu.
 
-To update later, re-run this same install command.
-To remove the local helper: cd $DEST && npm run helper:uninstall
+To update later: yoink update
+To remove Yoink: yoink uninstall
+(If the \`yoink\` command isn't found, open a new terminal, or see the
+install output above for where it was placed.)
 EOF

@@ -81,19 +81,30 @@ export class JobStore {
     return next
   }
 
-  async latest() {
+  async allJobs() {
     let entries
     try {
       entries = await readdir(this.root, { withFileTypes: true })
     } catch (error) {
-      if (error && typeof error === 'object' && error.code === 'ENOENT') return undefined
+      if (error && typeof error === 'object' && error.code === 'ENOENT') return []
       throw error
     }
     const jobs = (await Promise.all(entries
       .filter((entry) => entry.isDirectory())
       .map((entry) => this.read(entry.name))))
       .filter(Boolean)
-    return jobs.sort((a, b) => b.updatedAt - a.updatedAt || b.revision - a.revision)[0]
+    return jobs.sort((a, b) => b.updatedAt - a.updatedAt || b.revision - a.revision)
+  }
+
+  async latest() {
+    return (await this.allJobs())[0]
+  }
+
+  // Scopes "the current job" to the browser tab that started it, so a
+  // completed/active download on one site's tab never bleeds into the
+  // status shown for a different tab (see popup HELPER_STATUS handling).
+  async latestForTab(tabId) {
+    return (await this.allJobs()).find((job) => job.tabId === tabId)
   }
 }
 

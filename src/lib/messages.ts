@@ -40,11 +40,13 @@ export interface HelperStartMsg {
   type: 'HELPER_START'
   sourceUrl: string
   sourceTitle: string
+  tabId: number
 }
 
 export interface HelperStatusMsg {
   type: 'HELPER_STATUS'
   jobId?: string
+  tabId?: number
 }
 
 export interface HelperStopMsg {

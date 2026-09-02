@@ -23,6 +23,26 @@ describe('native helper protocol', () => {
     expect(() => parseRequest(request)).toThrow()
   })
 
+  it('accepts a tabId on start and status requests', () => {
+    expect(parseRequest({
+      v: 1,
+      id: 'request-2',
+      op: 'start',
+      idempotencyKey: 'episode-3',
+      sourceUrl: 'https://example.com/episode/3',
+      sourceTitle: 'Episode 3',
+      tabId: 42,
+      options: { preferResolution: true, preferredSubtitleLanguage: 'en' },
+    })).toMatchObject({ tabId: 42 })
+
+    expect(parseRequest({ v: 1, id: 'x', op: 'status', tabId: 42 })).toMatchObject({ tabId: 42 })
+  })
+
+  it('rejects a non-integer tabId', () => {
+    expect(() => parseRequest({ v: 1, id: 'x', op: 'status', tabId: 'not-a-number' })).toThrow()
+    expect(() => parseRequest({ v: 1, id: 'x', op: 'status', tabId: -1 })).toThrow()
+  })
+
   it('redacts request secrets from diagnostics', () => {
     expect(redactHeaders({
       Cookie: 'session=secret',

@@ -23,6 +23,8 @@ Yoink does not support DRM-protected media, CENC, SAMPLE-AES, authentication byp
 
 A background job does not navigate, mute, style, play, record, or enter fullscreen in the visible Chrome tab. The extension sends only the current page URL and title to the local helper. The helper launches a separate headless browser with its own temporary profile.
 
+Chrome's "Yoink is debugging this browser" banner can still appear briefly on the visible tab: opening Yoink on a page where no downloadable stream has been found yet triggers a short (30-second) fallback scan over Chrome's DevTools protocol to catch requests some hardened sites hide from ordinary network inspection. It detaches itself automatically and does not run on every page you visit — only on a page you've actually opened Yoink on, and only when the normal scan came up empty.
+
 ## Requirements
 
 - Yoink currently supports macOS.
@@ -65,6 +67,44 @@ npm run helper:install
 ```
 
 Then reload Yoink on `chrome://extensions`.
+
+## Updating or removing an existing install
+
+The installer also registers a global `yoink` command, so once Yoink is
+installed you don't need to remember the curl line again:
+
+```sh
+yoink update      # pulls the latest code, rebuilds, re-registers the helper
+yoink uninstall   # removes the local helper and the yoink command itself
+```
+
+`yoink update` re-runs `scripts/remote-install.sh` in place — same repo path,
+same branch — so it's exactly equivalent to re-running the original curl
+install command. `yoink uninstall` runs `npm run helper:uninstall` and then
+removes the `yoink` command; it does not delete the cloned project directory
+or unload the extension from Chrome (`chrome://extensions` still needs
+**Remove** clicked there, and, if you want the clone gone too, delete it
+yourself). Neither command touches already-completed downloads or job
+history.
+
+If `yoink` isn't found, open a new terminal (a fresh shell picks up a PATH
+change the installer made) or re-run `npm run cli:install` from the project
+directory.
+
+Without the `yoink` command, the equivalent manual steps are:
+
+```sh
+# Update
+curl -fsSL https://raw.githubusercontent.com/OwaisQuadri/yoink/main/scripts/remote-install.sh | sh
+# or, from a local clone:
+git pull && npm install && npm run build && npm run helper:install
+
+# Uninstall
+npm run helper:uninstall
+```
+
+The curl install clones into `$HOME/Yoink` by default; set `YOINK_DEST` to
+install elsewhere, or `YOINK_BRANCH` to track a branch other than `main`.
 
 ## Download an episode in the background
 
