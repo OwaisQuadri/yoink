@@ -313,12 +313,12 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
   }
 
   if (message.type === 'HELPER_START') {
-    void startHelperJob(message.sourceUrl, message.sourceTitle).then(sendResponse)
+    void startHelperJob(message.sourceUrl, message.sourceTitle, message.tabId).then(sendResponse)
     return true
   }
 
   if (message.type === 'HELPER_STATUS') {
-    void getHelperStatus(message.jobId).then(sendResponse)
+    void getHelperStatus(message.jobId, message.tabId).then(sendResponse)
     return true
   }
 

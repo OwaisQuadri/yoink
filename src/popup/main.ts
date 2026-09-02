@@ -164,6 +164,7 @@ async function refreshStatus() {
   const response = await chrome.runtime.sendMessage({
     type: 'HELPER_STATUS',
     jobId: currentJob?.jobId,
+    tabId: activeTab?.id,
   }) as HelperActionResp
   if (response.snapshot) renderJob(response.snapshot)
   if (!response.ok) {
@@ -186,13 +187,14 @@ folderButton.addEventListener('click', async () => {
 })
 
 startButton.addEventListener('click', async () => {
-  if (!activeTab?.url || !/^https?:/i.test(activeTab.url)) return
+  if (!activeTab?.id || !activeTab.url || !/^https?:/i.test(activeTab.url)) return
   startButton.disabled = true
   helperStatusEl.textContent = 'Sending the episode to the local helper…'
   const response = await chrome.runtime.sendMessage({
     type: 'HELPER_START',
     sourceUrl: activeTab.url,
     sourceTitle: activeTab.title ?? 'video',
+    tabId: activeTab.id,
   }) as HelperActionResp
   if (!response.ok) {
     helperStatusEl.textContent = response.error?.message ?? 'The helper could not start the download.'

@@ -66,6 +66,32 @@ npm run helper:install
 
 Then reload Yoink on `chrome://extensions`.
 
+## Updating an existing install
+
+Re-run the same installer used the first time:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/OwaisQuadri/yoink/main/scripts/remote-install.sh | sh
+```
+
+This pulls the latest `main`, reinstalls dependencies, rebuilds `dist/`, and
+re-registers the local helper (`npm run helper:install`) against the same
+stable extension ID, so no unpacked-extension reload beyond Chrome's own
+"Update" button on `chrome://extensions` is needed. It clones into
+`$HOME/Yoink` by default; set `YOINK_DEST` to install elsewhere, or
+`YOINK_BRANCH` to track a branch other than `main`. Safe to re-run any time —
+it does not touch already-completed downloads or job history.
+
+Working from a local clone instead (e.g. this repo checked out directly)?
+Pull and rerun the manual build steps above:
+
+```sh
+git pull
+npm install
+npm run build
+npm run helper:install
+```
+
 ## Download an episode in the background
 
 1. Open the episode page in Chrome.

@@ -41,8 +41,13 @@ function queueUpdate(jobId, patch) {
   return next
 }
 
-async function currentSnapshot(jobId) {
-  return jobId ? store.read(jobId) : store.latest()
+async function currentSnapshot(jobId, tabId) {
+  if (jobId) return store.read(jobId)
+  // No jobId means "whatever is current for this popup": scope it to the
+  // requesting tab so a completed/active job from a different site's tab
+  // never gets shown as the status of the tab actually being viewed.
+  if (tabId !== undefined) return store.latestForTab(tabId)
+  return store.latest()
 }
 
 async function runJob(jobId, request) {
@@ -150,7 +155,14 @@ async function startJob(request) {
   const latest = await store.latest()
   if (latest?.idempotencyKey === request.idempotencyKey) return latest
   if (latest && ACTIVE_PHASES.has(latest.phase)) {
-    throw helperError('DOWNLOAD_ACTIVE', 'Another background download is already active.')
+    // Only one Playwright/ffmpeg pipeline runs at a time, so this really is
+    // a global lock — but say whose download is holding it, since a stale
+    // "already active"/"already saved" message that doesn't name a source
+    // reads like the extension is blocking the *current* page for no reason.
+    throw helperError(
+      'DOWNLOAD_ACTIVE',
+      `Another background download ("${latest.sourceTitle}") is already active.`
+    )
   }
   const folder = await folderMetadata()
   if (!folder.configured) throw helperError('FOLDER_NOT_CONFIGURED', 'Choose a download folder first.')
@@ -163,6 +175,7 @@ async function startJob(request) {
     phase: 'queued',
     sourceUrl: request.sourceUrl,
     sourceTitle: request.sourceTitle,
+    tabId: request.tabId,
     folder,
     progress: { bytesWritten: 0 },
   })
@@ -195,7 +208,7 @@ async function handleRequest(raw) {
       return response(request.id, { snapshot, revision: snapshot.revision })
     }
     if (request.op === 'status') {
-      const snapshot = await currentSnapshot(request.jobId)
+      const snapshot = await currentSnapshot(request.jobId, request.tabId)
       return response(request.id, { snapshot, revision: snapshot?.revision ?? 0 })
     }
     if (request.op === 'stop') {

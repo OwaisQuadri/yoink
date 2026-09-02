@@ -96,6 +96,8 @@ export interface HelperJobSnapshot {
   phase: HelperJobPhase
   sourceUrl: string
   sourceTitle: string
+  /** The Chrome tab this job was started from; scopes popup status per site. */
+  tabId?: number
   selection?: HelperSelection
   progress: HelperProgress
   folder?: HelperFolder

@@ -52,20 +52,26 @@ async function cacheSnapshot(snapshot?: HelperJobSnapshot) {
   await updateHelperBadge(snapshot)
 }
 
+// Scoped to the tab the job started from. Without a tabId here, this badge
+// call (no `tabId` option) sets Chrome's action badge globally, so a
+// completed download on one site's tab kept showing "✓" on every other
+// tab, including a different episode that hadn't been downloaded yet.
 async function updateHelperBadge(snapshot: HelperJobSnapshot) {
+  if (snapshot.tabId == null) return
+  const tabId = snapshot.tabId
   if (ACTIVE_PHASES.has(snapshot.phase)) {
-    await chrome.action.setBadgeBackgroundColor({ color: '#7c3aed' })
-    await chrome.action.setBadgeText({ text: '↓' })
+    await chrome.action.setBadgeBackgroundColor({ tabId, color: '#7c3aed' })
+    await chrome.action.setBadgeText({ tabId, text: '↓' })
     return
   }
   if (snapshot.phase === 'completed') {
-    await chrome.action.setBadgeBackgroundColor({ color: '#15803d' })
-    await chrome.action.setBadgeText({ text: '✓' })
+    await chrome.action.setBadgeBackgroundColor({ tabId, color: '#15803d' })
+    await chrome.action.setBadgeText({ tabId, text: '✓' })
     return
   }
   if (snapshot.phase === 'failed' || snapshot.phase === 'interrupted') {
-    await chrome.action.setBadgeBackgroundColor({ color: '#b91c1c' })
-    await chrome.action.setBadgeText({ text: '!' })
+    await chrome.action.setBadgeBackgroundColor({ tabId, color: '#b91c1c' })
+    await chrome.action.setBadgeText({ tabId, text: '!' })
   }
 }
 
@@ -87,11 +93,16 @@ export async function chooseHelperFolder(): Promise<HelperActionResponse> {
   return { ok: true, folder: (response.result as { folder: HelperHealth['folder'] }).folder }
 }
 
-export async function startHelperJob(sourceUrl: string, sourceTitle: string): Promise<HelperActionResponse> {
+export async function startHelperJob(
+  sourceUrl: string,
+  sourceTitle: string,
+  tabId: number
+): Promise<HelperActionResponse> {
   const response = await nativeRequest('start', {
     idempotencyKey: crypto.randomUUID(),
     sourceUrl,
     sourceTitle,
+    tabId,
     options: { preferResolution: true, preferredSubtitleLanguage: 'en' },
   })
   if (response.snapshot) await cacheSnapshot(response.snapshot)
@@ -99,13 +110,27 @@ export async function startHelperJob(sourceUrl: string, sourceTitle: string): Pr
   return action(response)
 }
 
-export async function getHelperStatus(jobId?: string): Promise<HelperActionResponse> {
+// jobId/tabId come from the caller, not from the global cache, whenever the
+// caller knows which tab it's asking about (the popup always does). Falling
+// back to `cache.lastJobId` is reserved for the tabId-less alarm poll below,
+// which must keep tracking whichever job is actually running regardless of
+// which tab the user currently has focused.
+export async function getHelperStatus(jobId?: string, tabId?: number): Promise<HelperActionResponse> {
   const cache = await readCache()
-  const response = await nativeRequest('status', { jobId: jobId ?? cache.lastJobId })
+  const fields: Record<string, unknown> = {}
+  if (jobId) fields.jobId = jobId
+  else if (tabId != null) fields.tabId = tabId
+  else if (cache.lastJobId) fields.jobId = cache.lastJobId
+  const response = await nativeRequest('status', fields)
   if (!response.ok) {
+    // Only fall back to the cached snapshot when it's actually for the tab
+    // being asked about (or no tab was specified) — otherwise a helper
+    // hiccup on episode 3's tab would surface episode 2's cached snapshot,
+    // recreating the exact cross-tab leak this fix removes.
+    const cacheMatchesTab = tabId == null || cache.lastSnapshot?.tabId === tabId
     return {
       ok: false,
-      snapshot: cache.lastSnapshot,
+      snapshot: cacheMatchesTab ? cache.lastSnapshot : undefined,
       error: response.error ?? { code: 'HELPER_OFFLINE', message: 'The helper did not respond.' },
     }
   }
