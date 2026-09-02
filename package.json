@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "helper:install": "node scripts/install-native-host.mjs",
-    "helper:uninstall": "node scripts/uninstall-native-host.mjs"
+    "helper:uninstall": "node scripts/uninstall-native-host.mjs",
+    "cli:install": "node scripts/install-cli.mjs",
+    "cli:uninstall": "node scripts/uninstall-cli.mjs"
   },
   "devDependencies": {
     "@crxjs/vite-plugin": "^2.7.1",

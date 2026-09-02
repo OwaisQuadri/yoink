@@ -107,15 +107,22 @@ chrome.webRequest.onHeadersReceived.addListener(
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   candidatesByTab.delete(tabId)
+  void chrome.alarms.clear(debuggerDetachAlarmName(tabId))
   void detachDebugger(tabId)
 })
 
 chrome.webNavigation.onCommitted.addListener((details) => {
-  // Top-level navigation to a new page: reset candidates for that tab.
+  // Top-level navigation to a new page: reset candidates for that tab, and
+  // drop the CDP debugger — attaching it fresh, if still needed, happens
+  // lazily (see attachDebuggerBriefly) rather than on every page load. A
+  // debugger attached to every tab you merely browse to is what threw the
+  // "Yoink is debugging this browser" banner up constantly; it should only
+  // show while Yoink is actually inspecting a page for you.
   if (details.frameId === 0) {
     candidatesByTab.delete(details.tabId)
     updateBadge(details.tabId)
-    void attachDebugger(details.tabId)
+    void chrome.alarms.clear(debuggerDetachAlarmName(details.tabId))
+    void detachDebugger(details.tabId)
   }
 })
 
@@ -132,6 +139,25 @@ chrome.webNavigation.onCommitted.addListener((details) => {
 // This is diagnostic/fallback only — intentionally verbose so we can see
 // what a hardened site is really doing, not just what our regexes expect.
 const debuggerAttachedTabs = new Set<number>()
+const DEBUGGER_DETACH_ALARM_PREFIX = 'yoink-debugger-detach:'
+// How long the CDP fallback stays attached before releasing itself. Long
+// enough to catch a hardened embed's requests around initial player load;
+// short enough that the "being debugged" banner isn't a permanent fixture.
+const DEBUGGER_ATTACH_WINDOW_MINUTES = 0.5
+
+function debuggerDetachAlarmName(tabId: number): string {
+  return `${DEBUGGER_DETACH_ALARM_PREFIX}${tabId}`
+}
+
+// Attaches the CDP fallback only when there's an actual reason to — the
+// popup was opened on a tab whose candidates webRequest hasn't already
+// found — and schedules its own detach shortly after, instead of staying
+// attached for as long as the tab is open. Called from GET_CANDIDATES, i.e.
+// the moment a person actually opens Yoink to try to download something.
+async function attachDebuggerBriefly(tabId: number) {
+  await attachDebugger(tabId)
+  await chrome.alarms.create(debuggerDetachAlarmName(tabId), { delayInMinutes: DEBUGGER_ATTACH_WINDOW_MINUTES })
+}
 
 async function attachDebugger(tabId: number) {
   if (debuggerAttachedTabs.has(tabId)) return
@@ -156,8 +182,16 @@ async function attachDebugger(tabId: number) {
 }
 
 async function detachDebugger(tabId: number) {
-  if (!debuggerAttachedTabs.has(tabId)) return
   debuggerAttachedTabs.delete(tabId)
+  // Deliberately unconditional: `debuggerAttachedTabs` is in-memory state
+  // that an evicted MV3 service worker restarts empty, but the real CDP
+  // session Chrome is showing the "being debugged" banner for survives
+  // that restart untouched. The 30s auto-detach alarm (see
+  // attachDebuggerBriefly) is exactly the kind of event likely to wake a
+  // freshly-restarted worker — gating this call on the (now-empty) Set
+  // would silently skip the real detach and leave the banner up
+  // indefinitely. chrome.debugger.detach on an already-detached tab just
+  // rejects, which the catch below absorbs.
   try {
     await chrome.debugger.detach({ tabId })
   } catch {
@@ -254,7 +288,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
     const tabId = sender.tab?.id
     if (tabId == null) return
     void (async () => {
-      await attachDebugger(tabId)
+      await attachDebuggerBriefly(tabId)
       await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', {
         type: 'mousePressed',
         x: message.x,
@@ -286,6 +320,10 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
   if (message.type === 'GET_CANDIDATES') {
     const list = Array.from(getTabMap(message.tabId).values())
     sendResponse({ candidates: list })
+    // Nothing found through webRequest yet — this is the one moment the CDP
+    // fallback earns the "being debugged" banner: the person just opened
+    // Yoink specifically to look for something to download here.
+    if (list.length === 0) void attachDebuggerBriefly(message.tabId)
     return true
   }
 
@@ -336,7 +374,14 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
 })
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === 'yoink-helper-poll') pollHelperStatus()
+  if (alarm.name === 'yoink-helper-poll') {
+    pollHelperStatus()
+    return
+  }
+  if (alarm.name.startsWith(DEBUGGER_DETACH_ALARM_PREFIX)) {
+    const tabId = Number(alarm.name.slice(DEBUGGER_DETACH_ALARM_PREFIX.length))
+    if (Number.isInteger(tabId)) void detachDebugger(tabId)
+  }
 })
 
 async function ensureOffscreenDocument() {
