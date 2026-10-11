@@ -8,20 +8,36 @@ function mediaKind(url, contentType = '') {
 }
 
 export async function enumerateServers(page) {
-  const servers = await page.locator('a, button, [role="tab"]').evaluateAll((elements) => elements
-    .map((element, index) => {
-      const text = (element.textContent ?? '').trim().replace(/\s+/g, ' ')
-      const rect = element.getBoundingClientRect()
-      const style = getComputedStyle(element)
-      const href = element.tagName === 'A' ? element.getAttribute('href') : null
-      const visible = rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden'
-      const safe = element.tagName !== 'A' || (href ?? '').startsWith('#')
-      return { text, index, href, id: element.id, visible, safe }
-    })
-    .filter((item) => item.visible && item.safe && /^server\s*\d+/i.test(item.text)))
-  if (servers.length === 0) return [{ id: 'implicit', label: 'Current player', order: 0 }]
-  return servers.map((server, order) => ({
-    id: server.id ? `#${server.id}` : server.href || `index:${server.index}`,
+  // First pass: collect all candidates matching the visible/safe criteria.
+  const all = await page.locator('a, button, [role="tab"]').evaluateAll((elements) =>
+    elements
+      .map((element) => {
+        const text = (element.textContent ?? '').trim().replace(/\s+/g, ' ')
+        const rect = element.getBoundingClientRect()
+        const style = getComputedStyle(element)
+        const href = element.tagName === 'A' ? element.getAttribute('href') : null
+        const visible = rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden'
+        const safe = element.tagName !== 'A' || (href ?? '').startsWith('#')
+        return { text, href, id: element.id, visible, safe }
+      })
+  )
+
+  // Narrow to numbered servers ("Server 1", "Server 2", ...) if present.
+  const numbered = all.filter((item) => item.visible && item.safe && /^server\s*\d+/i.test(item.text))
+
+  // Fallback for sites without numbered servers (e.g. Rive's named choices):
+  // pick the first visible safe element whose text is non-empty and not a bare
+  // numeric-only button.
+  if (numbered.length === 0) {
+    const fallback = all.find((item) => item.visible && item.safe && item.text.length > 0 && !/^[\d]+$/.test(item.text))
+    if (fallback) {
+      return [{ id: fallback.href || 'index:0', label: fallback.text, order: 0 }]
+    }
+    return [{ id: 'implicit', label: 'Current player', order: 0 }]
+  }
+
+  return numbered.map((server, order) => ({
+    id: server.id ? `#${server.id}` : server.href || `index:${server.href}`,
     label: server.text,
     order,
   }))
