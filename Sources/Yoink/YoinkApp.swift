@@ -1,5 +1,4 @@
 import SwiftUI
-import WebKit
 
 @main
 struct YoinkApp: App {
@@ -61,7 +60,7 @@ struct ContentView: View {
                 .listStyle(.inset)
             }
 
-            SnifferHost(webView: store.sniffer.webView)
+            SnifferHost(sniffer: store.sniffer)
                 .frame(width: 1, height: 1)
                 .clipped()
         }
@@ -133,6 +132,15 @@ struct JobRow: View {
                 Image(systemName: "xmark")
             }
             .help("Remove")
+        case .finding:
+            Button("Show Page") { store.sniffer.showPage() }
+            Button {
+                store.cancel(job)
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+            }
+            .buttonStyle(.borderless)
+            .help("Stop")
         default:
             Button {
                 store.cancel(job)
@@ -168,11 +176,11 @@ struct JobRow: View {
 }
 
 struct SnifferHost: NSViewRepresentable {
-    let webView: WKWebView
+    let sniffer: Sniffer
 
     func makeNSView(context: Context) -> NSView {
         let container = NSView()
-        container.addSubview(webView)
+        sniffer.attach(to: container)
         return container
     }
 

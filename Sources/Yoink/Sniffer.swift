@@ -32,7 +32,7 @@ enum YoinkError: LocalizedError {
 }
 
 @MainActor
-final class Sniffer: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+final class Sniffer: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NSWindowDelegate {
     nonisolated static let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
     private static let adMarkers = ["doubleclick", "googlesyndication", "googleadservices", "imasdk", "dclk", "2mdn", "adservice", "/ads/", "vast", "preroll"]
     private static let clickServer = """
@@ -53,6 +53,8 @@ final class Sniffer: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
     }
 
     let webView: WKWebView
+    private var hiddenHost: NSView?
+    private var pageWindow: NSWindow?
     private var candidates: [Candidate] = []
     private var firstFreshCandidate = 0
     private var startSite = ""
@@ -86,8 +88,9 @@ final class Sniffer: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         var lastClick = Date()
         var firstSeen: Date?
         let deadline = Date().addingTimeInterval(240)
-        while Date() < deadline, Date().timeIntervalSince(lastChange) < 60 {
+        while isPageVisible || (Date() < deadline && Date().timeIntervalSince(lastChange) < 60) {
             try await Task.sleep(for: .milliseconds(500))
+            if !isPageVisible, try await isChallenged() { showPage() }
             if let chosen = best() {
                 isAnyServerSeen = true
                 guard let seen = firstSeen else { firstSeen = Date(); continue }
@@ -119,7 +122,7 @@ final class Sniffer: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
                 }
                 continue
             }
-            if isOutOfServers || !isAnyServerSeen, Date().timeIntervalSince(lastClick) > 5 {
+            if !isPageVisible, isOutOfServers || !isAnyServerSeen, Date().timeIntervalSince(lastClick) > 5 {
                 clickCenter()
                 lastClick = Date()
             }
@@ -139,7 +142,54 @@ final class Sniffer: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         }
     }
 
+    var isPageVisible: Bool {
+        pageWindow?.isVisible ?? false
+    }
+
+    func attach(to host: NSView) {
+        hiddenHost = host
+        if !isPageVisible { host.addSubview(webView) }
+    }
+
+    func showPage() {
+        let window = pageWindow ?? {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 700), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+            window.title = "Yoink"
+            window.isReleasedWhenClosed = false
+            window.delegate = self
+            window.center()
+            pageWindow = window
+            return window
+        }()
+        guard let content = window.contentView else { return }
+        webView.frame = content.bounds
+        webView.autoresizingMask = [.width, .height]
+        content.addSubview(webView)
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    func hidePage() {
+        pageWindow?.orderOut(nil)
+        returnToHiddenHost()
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        returnToHiddenHost()
+    }
+
+    private func returnToHiddenHost() {
+        webView.autoresizingMask = []
+        webView.frame = CGRect(x: 0, y: 0, width: 1280, height: 720)
+        hiddenHost?.addSubview(webView)
+    }
+
+    private func isChallenged() async throws -> Bool {
+        let text = try await webView.evaluateJavaScript("(document.title + ' ' + (document.body ? document.body.innerText.slice(0, 2000) : ''))") as? String ?? ""
+        return text.range(of: #"just a moment|verify you are (a )?human|security verification|checking your browser"#, options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
     func reset() {
+        hidePage()
         candidates = []
         webView.load(URLRequest(url: URL(string: "about:blank")!))
     }
