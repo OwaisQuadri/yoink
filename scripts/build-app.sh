@@ -23,5 +23,27 @@ cp $bin/Yoink $app/Contents/MacOS/Yoink
 cp Sources/Yoink/Sniffer.js $app/Contents/Resources/Sniffer.js
 cp $vendor/ffmpeg $app/Contents/Resources/ffmpeg
 cp Resources/Info.plist $app/Contents/Info.plist
-codesign --force --deep --sign - $app
-echo "Built $app"
+identity=$(security find-identity -v -p codesigning | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' | head -1)
+if [[ -z $identity ]]; then
+  codesign --force --deep --sign - $app
+  echo "Built $app (ad-hoc signed)"
+  exit 0
+fi
+codesign --force --options runtime --timestamp --sign "$identity" $app/Contents/Resources/ffmpeg
+codesign --force --options runtime --timestamp --sign "$identity" $app
+
+dmg=build/Yoink.dmg
+stage=build/dmg
+rm -rf $stage $dmg
+mkdir -p $stage
+cp -R $app $stage/
+ln -s /Applications $stage/Applications
+hdiutil create -quiet -volname Yoink -srcfolder $stage -format UDZO $dmg
+codesign --force --timestamp --sign "$identity" $dmg
+rm -rf $stage
+
+if [[ -n ${YOINK_NOTARY_PROFILE:-} ]]; then
+  xcrun notarytool submit $dmg --keychain-profile "$YOINK_NOTARY_PROFILE" --wait
+  xcrun stapler staple $dmg
+fi
+echo "Built $dmg"

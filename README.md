@@ -25,4 +25,4 @@ Requires macOS 14 or newer and Xcode command-line tools.
 ./scripts/build-app.sh
 ```
 
-The script downloads a static universal `ffmpeg` once into `vendor/` and writes `build/Yoink.app`. Copy that app to the Applications folder on the other Mac. The app is ad-hoc signed, so on first launch, right-click it and choose **Open**.
+The script downloads a static universal `ffmpeg` once into `vendor/` and writes `build/Yoink.app`. With a Developer ID certificate in Keychain, it also signs the app and writes `build/Yoink.dmg`. Set `YOINK_NOTARY_PROFILE` to a `notarytool` keychain profile to notarize and staple the disk image.
