@@ -11,6 +11,7 @@ final class Job: Identifiable {
         case saved(URL)
         case failed(String)
         case cancelled
+        case aborted
     }
 
     let id = UUID()
@@ -46,6 +47,11 @@ final class Store {
     @ObservationIgnored private var isFinding = false
 
     init() {
+        sniffer.onPageClosed = { [weak self] in
+            guard let self, let job = jobs.first(where: { $0.state == .finding }) else { return }
+            cancel(job)
+            job.state = .aborted
+        }
         folder = UserDefaults.standard.string(forKey: "folder").map { URL(fileURLWithPath: $0) }
         let temporary = FileManager.default.temporaryDirectory
         for name in (try? FileManager.default.contentsOfDirectory(atPath: temporary.path)) ?? [] where name.hasPrefix("yoink-") {

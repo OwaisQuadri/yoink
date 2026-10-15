@@ -124,7 +124,7 @@ struct JobRow: View {
                 Image(systemName: "magnifyingglass")
             }
             .help("Show in Finder")
-        case .failed, .cancelled:
+        case .failed, .cancelled, .aborted:
             Button("Try Again") { store.retry(job) }
             Button {
                 store.remove(job)
@@ -164,6 +164,7 @@ struct JobRow: View {
         case .saved: return "Saved"
         case .failed(let reason): return reason
         case .cancelled: return "Stopped"
+        case .aborted: return "Aborted"
         }
     }
 

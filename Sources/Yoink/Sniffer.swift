@@ -55,6 +55,7 @@ final class Sniffer: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NSW
     let webView: WKWebView
     private var hiddenHost: NSView?
     private var pageWindow: NSWindow?
+    var onPageClosed: (() -> Void)?
     private var candidates: [Candidate] = []
     private var firstFreshCandidate = 0
     private var startSite = ""
@@ -175,6 +176,7 @@ final class Sniffer: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NSW
 
     func windowWillClose(_ notification: Notification) {
         returnToHiddenHost()
+        onPageClosed?()
     }
 
     private func returnToHiddenHost() {
