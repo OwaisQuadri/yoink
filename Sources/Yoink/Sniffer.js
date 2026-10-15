@@ -1,7 +1,7 @@
 (() => {
   if (window.__yoink) return;
   window.__yoink = true;
-  const mediaPattern = /\.(m3u8|mpd|mp4|webm|m4v|mov)(\?|#|$)|\/m3u8\?|\/playlist\b|\/manifest\b/i;
+  const mediaPattern = /\.(m3u8|mpd|mp4|webm|m4v|mov)(\?|#|$)|\/m3u8\?/i;
   const seen = new Set();
   const send = (raw, kind) => {
     let url;

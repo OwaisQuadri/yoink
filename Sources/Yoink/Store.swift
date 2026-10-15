@@ -47,6 +47,10 @@ final class Store {
 
     init() {
         folder = UserDefaults.standard.string(forKey: "folder").map { URL(fileURLWithPath: $0) }
+        let temporary = FileManager.default.temporaryDirectory
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: temporary.path)) ?? [] where name.hasPrefix("yoink-") {
+            try? FileManager.default.removeItem(at: temporary.appendingPathComponent(name))
+        }
     }
 
     @discardableResult
@@ -96,18 +100,24 @@ final class Store {
             do {
                 media = try await sniffer.find(job.pageURL)
             } catch {
-                isFinding = false
                 if job.state == .finding { job.state = .failed(error.localizedDescription) }
-                startNext()
+                releaseSniffer()
                 return
             }
-            isFinding = false
-            startNext()
-            guard job.state == .finding else { return }
-            job.title = media.title
-            job.state = .downloading
-            await download(job, media: media, folder: folder)
+            if media.fetcher == nil { releaseSniffer() }
+            if job.state == .finding {
+                job.title = media.title
+                job.state = .downloading
+                await download(job, media: media, folder: folder)
+            }
+            if media.fetcher != nil { releaseSniffer() }
         }
+    }
+
+    private func releaseSniffer() {
+        sniffer.reset()
+        isFinding = false
+        startNext()
     }
 
     private func download(_ job: Job, media: FoundMedia, folder: URL) async {
@@ -116,15 +126,14 @@ final class Store {
         job.process = process
         let started = Date()
         do {
-            try await Downloader.save(media, to: output, process: process) { seconds, duration in
-                guard let duration, duration > 0 else { return }
-                let fraction = min(seconds / duration, 1)
+            try await Downloader.save(media, to: output, process: process) { fraction in
                 job.fraction = fraction
                 let elapsed = Date().timeIntervalSince(started)
                 job.secondsLeft = fraction > 0.01 ? elapsed / fraction - elapsed : nil
             }
             job.state = .saved(output)
         } catch {
+            log.error("download failed \(job.pageURL.absoluteString, privacy: .public): \(String(describing: error), privacy: .public)")
             if job.state != .cancelled { job.state = .failed(error.localizedDescription) }
         }
         job.process = nil

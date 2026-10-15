@@ -1,18 +1,31 @@
+import OSLog
 import WebKit
 
+let log = Logger(subsystem: "com.owaisquadri.yoink", category: "sniffer")
+
 struct FoundMedia {
+    enum Kind {
+        case hls
+        case dash
+        case file
+    }
+
     let url: URL
+    let kind: Kind
     let title: String
     let headers: [String: String]
+    var fetcher: FrameFetcher?
 }
 
 enum YoinkError: LocalizedError {
     case noVideo
+    case unreachable
     case downloadFailed(String)
 
     var errorDescription: String? {
         switch self {
         case .noVideo: "Couldn’t find a video on this page"
+        case .unreachable: "The video’s servers can’t be reached on this network"
         case .downloadFailed(let reason): reason
         }
     }
@@ -22,15 +35,26 @@ enum YoinkError: LocalizedError {
 final class Sniffer: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
     nonisolated static let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
     private static let adMarkers = ["doubleclick", "googlesyndication", "googleadservices", "imasdk", "dclk", "2mdn", "adservice", "/ads/", "vast", "preroll"]
+    private static let clickServer = """
+        const pattern = /^\\s*server\\s*\\d+\\s*$/i;
+        const buttons = [...document.querySelectorAll('a, button, li, div, span')]
+            .filter((element) => pattern.test(element.textContent || ''))
+            .filter((element) => ![...element.querySelectorAll('*')].some((child) => pattern.test(child.textContent || '')));
+        if (index >= buttons.length) return false;
+        buttons[index].click();
+        return true;
+        """
 
     private struct Candidate {
         let url: URL
         let kind: String
         let page: String
+        let frame: WKFrameInfo
     }
 
     let webView: WKWebView
     private var candidates: [Candidate] = []
+    private var firstFreshCandidate = 0
     private var startSite = ""
 
     override init() {
@@ -50,19 +74,77 @@ final class Sniffer: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
 
     func find(_ pageURL: URL) async throws -> FoundMedia {
         candidates = []
+        firstFreshCandidate = 0
         startSite = Self.site(pageURL.host)
         webView.load(URLRequest(url: pageURL))
-        defer { webView.load(URLRequest(url: URL(string: "about:blank")!)) }
 
+        var serverIndex = 0
+        var isAnyServerSeen = false
+        var isOutOfServers = false
+        var isSwitchDue = false
+        var lastChange = Date()
+        var lastClick = Date()
         var firstSeen: Date?
-        let deadline = Date().addingTimeInterval(90)
-        while Date() < deadline {
+        let deadline = Date().addingTimeInterval(240)
+        while Date() < deadline, Date().timeIntervalSince(lastChange) < 60 {
             try await Task.sleep(for: .milliseconds(500))
-            if firstSeen == nil, best() != nil { firstSeen = Date() }
-            if let firstSeen, Date().timeIntervalSince(firstSeen) > 5 { break }
+            if let chosen = best() {
+                isAnyServerSeen = true
+                guard let seen = firstSeen else { firstSeen = Date(); continue }
+                guard Date().timeIntervalSince(seen) > 4 else { continue }
+                var media = await makeMedia(chosen)
+                do { try await Downloader.probe(media); return media } catch {
+                    log.error("direct probe failed \(chosen.url.absoluteString, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                }
+                media.fetcher = FrameFetcher(webView: webView, frame: chosen.frame)
+                do { try await Downloader.probe(media); return media } catch {
+                    log.error("frame probe failed \(chosen.url.absoluteString, privacy: .public): \(String(describing: error), privacy: .public)")
+                }
+                firstFreshCandidate = candidates.count
+                firstSeen = nil
+                lastChange = Date()
+                isSwitchDue = true
+                continue
+            }
+            if !isOutOfServers, isSwitchDue || Date().timeIntervalSince(lastChange) > 25 {
+                isSwitchDue = false
+                serverIndex += 1
+                let isClicked = try await webView.callAsyncJavaScript(Self.clickServer, arguments: ["index": serverIndex], contentWorld: .page) as? Bool ?? false
+                log.info("server \(serverIndex) clicked: \(isClicked)")
+                if isClicked {
+                    firstFreshCandidate = candidates.count
+                    lastChange = Date()
+                } else {
+                    isOutOfServers = true
+                }
+                continue
+            }
+            if isOutOfServers || !isAnyServerSeen, Date().timeIntervalSince(lastClick) > 5 {
+                clickCenter()
+                lastClick = Date()
+            }
         }
-        guard let chosen = best() else { throw YoinkError.noVideo }
+        throw isAnyServerSeen ? YoinkError.unreachable : YoinkError.noVideo
+    }
 
+    private func clickCenter() {
+        guard let window = webView.window else { return }
+        let point = webView.convert(NSPoint(x: webView.bounds.midX, y: webView.bounds.midY), to: nil)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            guard let event = NSEvent.mouseEvent(
+                with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1
+            ) else { continue }
+            if type == .leftMouseDown { webView.mouseDown(with: event) } else { webView.mouseUp(with: event) }
+        }
+    }
+
+    func reset() {
+        candidates = []
+        webView.load(URLRequest(url: URL(string: "about:blank")!))
+    }
+
+    private func makeMedia(_ chosen: Candidate) async -> FoundMedia {
         var headers = ["Referer": chosen.page]
         if let page = URL(string: chosen.page), let scheme = page.scheme, let host = page.host {
             headers["Origin"] = "\(scheme)://\(host)"
@@ -75,28 +157,36 @@ final class Sniffer: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         if !cookies.isEmpty {
             headers["Cookie"] = cookies.map { "\($0.name)=\($0.value)" }.joined(separator: "; ")
         }
-        return FoundMedia(url: chosen.url, title: Self.cleanTitle(webView.title ?? ""), headers: headers)
+        let kind: FoundMedia.Kind = switch Self.rank(chosen) {
+        case 3: .hls
+        case 2: .dash
+        default: .file
+        }
+        return FoundMedia(url: chosen.url, kind: kind, title: Self.cleanTitle(webView.title ?? ""), headers: headers)
     }
 
     private func best() -> Candidate? {
-        let usable = candidates.filter { candidate in
+        let usable = candidates[firstFreshCandidate...].filter { candidate in
             let text = candidate.url.absoluteString.lowercased()
             return !Self.adMarkers.contains { text.contains($0) }
         }
-        func rank(_ candidate: Candidate) -> Int {
-            let text = candidate.url.absoluteString.lowercased()
-            if candidate.kind == "hls" || text.contains("m3u8") { return 3 }
-            if candidate.kind == "dash" || text.contains(".mpd") { return 2 }
-            return 1
-        }
-        let top = usable.map(rank).max()
-        return usable.first { rank($0) == top }
+        func score(_ candidate: Candidate) -> Int { Self.rank(candidate) * 2 + (candidate.kind == "video" ? 1 : 0) }
+        let top = usable.map(score).max()
+        return usable.first { score($0) == top }
+    }
+
+    private static func rank(_ candidate: Candidate) -> Int {
+        let text = candidate.url.absoluteString.lowercased()
+        if candidate.kind == "hls" || text.contains("m3u8") { return 3 }
+        if candidate.kind == "dash" || text.contains(".mpd") { return 2 }
+        return 1
     }
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let body = message.body as? [String: Any],
-              let text = body["url"] as? String, let url = URL(string: text) else { return }
-        candidates.append(Candidate(url: url, kind: body["kind"] as? String ?? "net", page: body["page"] as? String ?? ""))
+              let text = body["url"] as? String, let url = URL(string: text), url.scheme?.hasPrefix("http") == true else { return }
+        log.info("candidate \(text, privacy: .public)")
+        candidates.append(Candidate(url: url, kind: body["kind"] as? String ?? "net", page: body["page"] as? String ?? "", frame: message.frameInfo))
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
