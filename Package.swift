@@ -9,6 +9,7 @@ let package = Package(
             name: "Yoink",
             resources: [.copy("Sniffer.js")],
             swiftSettings: [.unsafeFlags(["-warnings-as-errors"])]
-        )
+        ),
+        .testTarget(name: "YoinkTests", dependencies: ["Yoink"], swiftSettings: [.unsafeFlags(["-warnings-as-errors"])])
     ]
 )
