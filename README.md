@@ -25,14 +25,14 @@ Requires macOS 14 or newer and Xcode command-line tools.
 ./scripts/build-app.sh
 ```
 
-The script downloads a static universal `ffmpeg` once into `vendor/` and writes `build/Yoink.app`. With a Developer ID certificate in Keychain, it also signs the app and writes `build/Yoink.dmg`. Set `YOINK_NOTARY_PROFILE` to a `notarytool` keychain profile to notarize and staple the disk image.
+The script downloads a static universal `ffmpeg` once into `vendor/` and writes `build/Yoink.app`. With a Developer ID certificate in Keychain, it also signs the app and writes `build/Yoink.dmg`. It submits the disk image for notarization using the `yoink` Keychain profile, then staples and validates tickets for both the app and disk image. A failed notarization or ticket check fails the build. Set `YOINK_NOTARY_PROFILE` only to use a different `notarytool` Keychain profile.
 
 The app embeds Sparkle from the version pinned in `Package.resolved`. The build script signs its framework, updater, installer, and downloader before signing the app.
 
 ## Prepare an update locally
 
 1. Set `CFBundleShortVersionString` in `Resources/Info.plist` to the release version. Increase `CFBundleVersion` for every release. Sparkle compares the build number, not the displayed version.
-2. Build the final app with `./scripts/build-app.sh`. For distribution, use `YOINK_NOTARY_PROFILE` and wait for notarization to succeed.
+2. Build the final app with `./scripts/build-app.sh` and wait for notarization and ticket validation to succeed.
 3. Run `./scripts/generate-appcast.sh` on the signing Mac. It writes a versioned disk image and signed `appcast.xml` under `build/updates/`. It publishes nothing.
 4. Before distribution, validate the original disk image with `xcrun stapler validate build/Yoink.dmg`. Generate the appcast again after any change to the disk image, including stapling.
 
