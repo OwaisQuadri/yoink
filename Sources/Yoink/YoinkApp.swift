@@ -18,6 +18,12 @@ final class AppUpdater: NSObject, ObservableObject, SPUStandardUserDriverDelegat
         controller.checkForUpdates(nil)
     }
 
+    var supportsGentleScheduledUpdateReminders: Bool { true }
+
+    func standardUserDriverShouldHandleShowingScheduledUpdate(_ update: SUAppcastItem, andInImmediateFocus isInImmediateFocus: Bool) -> Bool {
+        false
+    }
+
     func standardUserDriverWillHandleShowingUpdate(_ isHandledByDriver: Bool, forUpdate update: SUAppcastItem, state: SPUUserUpdateState) {
         isUpdateAvailable = !isHandledByDriver
     }
