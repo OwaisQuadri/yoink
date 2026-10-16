@@ -138,8 +138,8 @@ enum Downloader {
         return tracks
     }
 
-    private static func fileTrack(_ media: FoundMedia) async throws -> HLSTrack {
-        let (_, total, isPartial) = try await get(media, media.url, range: 0..<1)
+    static func fileTrack(_ media: FoundMedia) async throws -> HLSTrack {
+        let (_, total, isPartial) = try await get(media, media.url, range: 0..<16)
         guard isPartial, let size = total else {
             return HLSTrack(segments: [HLSSegment(url: media.url, duration: 0, byteRange: nil, keyURL: nil, iv: nil)])
         }
