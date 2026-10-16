@@ -60,8 +60,9 @@ hdiutil create -quiet -volname Yoink -srcfolder $stage -format UDZO $dmg
 codesign --force --timestamp --sign "$identity" $dmg
 rm -rf $stage
 
-if [[ -n ${YOINK_NOTARY_PROFILE:-} ]]; then
-  xcrun notarytool submit $dmg --keychain-profile "$YOINK_NOTARY_PROFILE" --wait
-  xcrun stapler staple $dmg
-fi
-echo "Built $dmg"
+xcrun notarytool submit $dmg --keychain-profile "${YOINK_NOTARY_PROFILE:-yoink}" --wait
+xcrun stapler staple $app
+xcrun stapler validate $app
+xcrun stapler staple $dmg
+xcrun stapler validate $dmg
+echo "Built and notarized $app and $dmg"
