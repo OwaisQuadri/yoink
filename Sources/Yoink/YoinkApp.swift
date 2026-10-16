@@ -1,8 +1,46 @@
 import SwiftUI
+import Sparkle
+
+final class AppUpdater: NSObject, ObservableObject, SPUStandardUserDriverDelegate {
+    @Published private(set) var isCheckForUpdatesEnabled = false
+    @Published private(set) var isUpdateAvailable = false
+    private var controller: SPUStandardUpdaterController!
+
+    override init() {
+        super.init()
+        controller = SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: nil, userDriverDelegate: self)
+        controller.updater.publisher(for: \.canCheckForUpdates)
+            .assign(to: &$isCheckForUpdatesEnabled)
+        controller.startUpdater()
+    }
+
+    func checkForUpdates() {
+        controller.checkForUpdates(nil)
+    }
+
+    var supportsGentleScheduledUpdateReminders: Bool { true }
+
+    func standardUserDriverShouldHandleShowingScheduledUpdate(_ update: SUAppcastItem, andInImmediateFocus isInImmediateFocus: Bool) -> Bool {
+        false
+    }
+
+    func standardUserDriverWillHandleShowingUpdate(_ isHandledByDriver: Bool, forUpdate update: SUAppcastItem, state: SPUUserUpdateState) {
+        isUpdateAvailable = !isHandledByDriver
+    }
+
+    func standardUserDriverDidReceiveUserAttention(forUpdate update: SUAppcastItem) {
+        isUpdateAvailable = false
+    }
+
+    func standardUserDriverWillFinishUpdateSession() {
+        isUpdateAvailable = false
+    }
+}
 
 @main
 struct YoinkApp: App {
     @State private var store = Store()
+    @StateObject private var updater = AppUpdater()
 
     init() {
         NSApplication.shared.setActivationPolicy(.regular)
@@ -10,11 +48,28 @@ struct YoinkApp: App {
 
     var body: some Scene {
         Window("Yoink", id: "main") {
-            ContentView()
+            VStack(spacing: 0) {
+                if updater.isUpdateAvailable {
+                    HStack {
+                        Text("A newer build is available")
+                        Spacer()
+                        Button("View Update…", action: updater.checkForUpdates)
+                    }
+                    .padding(12)
+                    Divider()
+                }
+                ContentView()
+            }
                 .environment(store)
                 .frame(minWidth: 520, minHeight: 360)
         }
         .windowResizability(.contentMinSize)
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…", action: updater.checkForUpdates)
+                    .disabled(!updater.isCheckForUpdatesEnabled)
+            }
+        }
     }
 }
 

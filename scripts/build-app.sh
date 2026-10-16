@@ -14,23 +14,41 @@ if [[ ! -x $vendor/ffmpeg ]]; then
   lipo -create $vendor/arm64/ffmpeg $vendor/amd64/ffmpeg -output $vendor/ffmpeg
 fi
 
-swift build -c release --arch arm64 --arch x86_64
-bin=$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)
+minimum_system=$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' Resources/Info.plist)
+mkdir -p build/bin
+for arch in arm64 x86_64; do
+  triple=$arch-apple-macosx$minimum_system
+  swift build -c release --triple $triple -Xswiftc -warnings-as-errors
+  bin=$(swift build -c release --triple $triple --show-bin-path)
+  cp $bin/Yoink build/bin/Yoink-$arch
+done
+sparkle=.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework
 
 rm -rf $app
-mkdir -p $app/Contents/MacOS $app/Contents/Resources
-cp $bin/Yoink $app/Contents/MacOS/Yoink
+mkdir -p $app/Contents/MacOS $app/Contents/Resources $app/Contents/Frameworks
+ditto $sparkle $app/Contents/Frameworks/Sparkle.framework
+lipo -create build/bin/Yoink-arm64 build/bin/Yoink-x86_64 -output $app/Contents/MacOS/Yoink
 cp Sources/Yoink/Sniffer.js $app/Contents/Resources/Sniffer.js
 cp $vendor/ffmpeg $app/Contents/Resources/ffmpeg
 cp Resources/Info.plist $app/Contents/Info.plist
 identity=$(security find-identity -v -p codesigning | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' | head -1)
+signing=(--force --sign "${identity:--}")
+if [[ -n $identity ]]; then
+  signing+=(--options runtime --timestamp)
+fi
+framework=$app/Contents/Frameworks/Sparkle.framework
+codesign $signing $framework/Versions/B/XPCServices/Installer.xpc
+codesign $signing --preserve-metadata=entitlements $framework/Versions/B/XPCServices/Downloader.xpc
+codesign $signing $framework/Versions/B/Autoupdate
+codesign $signing $framework/Versions/B/Updater.app
+codesign $signing $framework
+codesign $signing $app/Contents/Resources/ffmpeg
+codesign $signing $app
+codesign --verify --deep --strict --verbose=2 $app
 if [[ -z $identity ]]; then
-  codesign --force --deep --sign - $app
-  echo "Built $app (ad-hoc signed)"
+  echo "Built $app (ad-hoc signed; not for distribution)"
   exit 0
 fi
-codesign --force --options runtime --timestamp --sign "$identity" $app/Contents/Resources/ffmpeg
-codesign --force --options runtime --timestamp --sign "$identity" $app
 
 dmg=build/Yoink.dmg
 stage=build/dmg
