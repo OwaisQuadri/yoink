@@ -43,7 +43,7 @@ The script caches pinned `ffmpeg`, `ffprobe`, whisper.cpp source, and the multil
 
 Use `./scripts/build-app.sh --local` for an ad-hoc signed app without notarization or a disk image. This does not install the app.
 
-Without `--local`, a Developer ID certificate in Keychain enables signing and creation of `build/Yoink.dmg`. It submits the disk image for notarization using the `yoink` Keychain profile, then staples and validates tickets for both the app and disk image. A failed notarization or ticket check fails the build. Set `YOINK_NOTARY_PROFILE` only to use a different `notarytool` Keychain profile.
+Without `--local`, a Developer ID certificate in Keychain enables signing and creation of `build/Yoink.dmg`. The script submits an app ZIP for notarization using the `yoink` Keychain profile, then staples and validates the app before packaging it. It validates the staged app's ticket, creates the disk image, then notarizes, staples, and validates the disk image. A failed notarization or ticket check fails the build. Set `YOINK_NOTARY_PROFILE` only to use a different `notarytool` Keychain profile.
 
 The app embeds Sparkle from the version pinned in `Package.resolved`. The build script signs its framework, updater, installer, and downloader before signing the app.
 
