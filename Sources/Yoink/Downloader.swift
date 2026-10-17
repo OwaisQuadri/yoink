@@ -58,7 +58,7 @@ enum Downloader {
             }
             throw lastError
         }
-        let (data, response) = try await fetch(url, headers: media.headers, range: range, attempts: isProbe ? 1 : 3, timeout: isProbe ? 10 : 30)
+        let (data, response) = try await fetch(url, headers: media.requestHeaders(for: url), range: range, attempts: isProbe ? 1 : 3, timeout: isProbe ? 10 : 30)
         let total = (response.value(forHTTPHeaderField: "Content-Range")?.split(separator: "/").last).flatMap { Int($0) }
         return (data, total, response.statusCode == 206)
     }
@@ -129,7 +129,7 @@ enum Downloader {
     private static func acquire(_ media: FoundMedia, work: URL, tracker: ProgressTracker) async throws -> (URL, [SubtitleTrack]) {
         let inputs: [String]
         var subtitles = media.subtitles
-        var epochs: [TransportEpoch] = []
+        var timeline = TransportTimeline.available([])
         switch media.kind {
         case .hls:
             let (tracks, renditions) = try await hlsTracks(media)
@@ -138,8 +138,8 @@ enum Downloader {
             var files: [String] = []
             for (index, track) in tracks.enumerated() {
                 let file = work.appendingPathComponent("track\(index)")
-                let timeline = try await download(track, media: media, to: file, tracker: tracker, isVideo: index == 0)
-                if index == 0 { epochs = timeline }
+                let downloadedTimeline = try await download(track, media: media, to: file, tracker: tracker, isVideo: index == 0)
+                if index == 0 { timeline = downloadedTimeline }
                 files.append(file.path)
             }
             inputs = files
@@ -167,11 +167,17 @@ enum Downloader {
         let stagedInventory = try await MediaInventory.read(staged)
         let videoStart = stagedInventory.streams.first { $0.codec_type == "video" }?.start_time.flatMap(Double.init) ?? 0
         let formatStart = stagedInventory.format.start_time.flatMap(Double.init) ?? 0
-        let presentationShift = Int(((videoStart - formatStart) * 1000).rounded())
+        let presentationShift: Int
+        do {
+            presentationShift = try SubtitleTime.milliseconds(videoStart - formatStart)
+        } catch {
+            timeline = .unavailable(error.localizedDescription)
+            presentationShift = 0
+        }
         var seen = Set<URL>()
         for remote in subtitles where seen.insert(remote.url).inserted {
             do {
-                sourceTracks.append(try await WebCaptions.download(remote, media: media, work: work, epochs: epochs, presentationShift: presentationShift))
+                sourceTracks.append(try await WebCaptions.download(remote, media: media, work: work, timeline: timeline, presentationShift: presentationShift))
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
@@ -206,7 +212,7 @@ enum Downloader {
         return HLSTrack(segments: segments)
     }
 
-    private static func download(_ track: HLSTrack, media: FoundMedia, to file: URL, tracker: ProgressTracker, isVideo: Bool = false) async throws -> [TransportEpoch] {
+    private static func download(_ track: HLSTrack, media: FoundMedia, to file: URL, tracker: ProgressTracker, isVideo: Bool = false) async throws -> TransportTimeline {
         FileManager.default.createFile(atPath: file.path, contents: nil)
         let handle = try FileHandle(forWritingTo: file)
         defer { try? handle.close() }
@@ -215,8 +221,8 @@ enum Downloader {
             initialization = try await get(media, initSegment.url, range: initSegment.byteRange).data
             try handle.write(contentsOf: initialization)
         }
-        var epochs: [TransportEpoch] = []
-        var elapsed = 0.0
+        var timeline = TransportTimeline.available([])
+        var elapsed = 0
         var keys: [URL: Data] = [:]
         for url in Set(track.segments.compactMap(\.keyURL)) {
             keys[url] = try await get(media, url).data
@@ -246,18 +252,29 @@ enum Downloader {
             for try await (index, data) in group {
                 pending[index] = data
                 while let ready = pending.removeValue(forKey: nextWrite) {
-                    if isVideo, nextWrite == 0 || segments[nextWrite].isDiscontinuity {
-                        let probe = file.appendingPathExtension("epoch")
-                        defer { try? FileManager.default.removeItem(at: probe) }
-                        try (initialization + ready).write(to: probe)
-                        let inventory = try await MediaInventory.read(probe)
-                        guard let start = inventory.streams.first(where: { $0.codec_type == "video" })?.start_time.flatMap(Double.init), start.isFinite else {
-                            throw YoinkError.downloadFailed("Couldn’t align HLS subtitle timestamps")
+                    if isVideo, case .available(var epochs) = timeline {
+                        do {
+                            let duration = try SubtitleTime.duration(segments[nextWrite].duration)
+                            let nextElapsed = try SubtitleTime.add(elapsed, duration)
+                            if nextWrite == 0 || segments[nextWrite].isDiscontinuity {
+                                let probe = file.appendingPathExtension("epoch")
+                                defer { try? FileManager.default.removeItem(at: probe) }
+                                try (initialization + ready).write(to: probe)
+                                let inventory = try await MediaInventory.read(probe)
+                                guard let start = inventory.streams.first(where: { $0.codec_type == "video" })?.start_time.flatMap(Double.init) else {
+                                    throw YoinkError.downloadFailed("Couldn’t align HLS subtitle timestamps")
+                                }
+                                epochs.append(TransportEpoch(start: elapsed, transportStart: try SubtitleTime.milliseconds(start)))
+                            }
+                            timeline = .available(epochs)
+                            elapsed = nextElapsed
+                        } catch is CancellationError {
+                            throw CancellationError()
+                        } catch {
+                            timeline = .unavailable(error.localizedDescription)
                         }
-                        epochs.append(TransportEpoch(start: Int((elapsed * 1000).rounded()), transportStart: Int((start * 1000).rounded())))
                     }
                     try handle.write(contentsOf: ready)
-                    elapsed += segments[nextWrite].duration
                     nextWrite += 1
                 }
                 await tracker.advance()
@@ -267,7 +284,7 @@ enum Downloader {
                 }
             }
         }
-        return epochs
+        return timeline
     }
 
     private static func remux(_ inputs: [String], audioInput: Int, headers: [String: String], to output: URL) async throws {

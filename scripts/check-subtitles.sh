@@ -8,7 +8,7 @@ if [[ ! -x $ffmpeg || ! -x $ffprobe || ! -x vendor/whisper/whisper-cli || ! -f v
   print -u2 'Run zsh scripts/build-app.sh --local first.'
   exit 1
 fi
-work=$(mktemp -d "${TMPDIR:-/tmp}/yoink-check.XXXXXX")
+work=$(mktemp -d "${TMPDIR:-/tmp}/subtitle-check.XXXXXX")
 port=${YOINK_CHECK_PORT:-8948}
 mkdir -p $work/site/hls $work/site/dash
 say -v 'Eddy (Spanish (Spain))' -r 145 -o $work/spanish.aiff 'Hola, buenos días. Hoy vamos a visitar la biblioteca. Me gusta leer libros y aprender idiomas. Después vamos a tomar un café con nuestros amigos.'
@@ -43,6 +43,35 @@ cat > $work/site/hls/master.m3u8 <<'PLAYLIST'
 #EXT-X-STREAM-INF:BANDWIDTH=500000,SUBTITLES="subs"
 video.m3u8
 PLAYLIST
+cat > $work/site/two-videos.html <<'PAGE'
+<!doctype html><title>Two videos</title>
+<video src="spanish.mp4"><track kind="subtitles" src="selected.vtt" srclang="es"></video>
+<video src="english.mp4"><track kind="subtitles" src="unrelated.vtt" srclang="en"></video>
+PAGE
+printf 'WEBVTT\n\n00:00:00.500 --> 00:00:02.000\nSelected captions\n' > $work/site/selected.vtt
+cp $work/site/selected.vtt $work/site/unrelated.vtt
+cat > $work/site/cancel-probe.html <<'PAGE'
+<!doctype html><title>Delayed frame probe</title><video src="missing.mp4"></video>
+<script>
+window.fetch = async () => {
+  window.isProbeStarted = true;
+  await new Promise(resolve => setTimeout(resolve, 1500));
+  return new Response(new Uint8Array(16), { status: 200 });
+};
+</script>
+PAGE
+cat > $work/site/shared-header.vtt <<'CAPTIONS'
+WEBVTT
+X-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:1080000
+CAPTIONS
+printf '00:00:00.500 --> 00:00:01.000\nShared header captions\n' > $work/site/caption-body.vtt
+printf '#EXTM3U\n#EXT-X-MAP:URI="shared-header.vtt"\n#EXTINF:4,\ncaption-body.vtt\n#EXT-X-ENDLIST\n' > $work/site/shared-captions.m3u8
+for duration in 1e100 -1 nan inf; do
+  printf '#EXTM3U\n#EXTINF:%s,\ncaption-body.vtt\n#EXT-X-ENDLIST\n' $duration > $work/site/invalid-$duration.m3u8
+done
+printf '#EXTM3U\n#EXT-X-MAP:URI="shared-header.vtt"\n#EXTINF:5e15,\ncaption-body.vtt\n#EXTINF:5e15,\ncaption-body.vtt\n#EXT-X-ENDLIST\n' > $work/site/invalid-overflow.m3u8
+sed 's/#EXTINF:3.000000,/#EXTINF:1e100,/' $video > $work/site/hls/invalid-video.m3u8
+sed 's/video.m3u8/invalid-video.m3u8/' $work/site/hls/master.m3u8 > $work/site/hls/invalid-master.m3u8
 python3 -m http.server $port --bind 127.0.0.1 --directory $work/site > $work/http.log 2>&1 &
 server=$!
 trap 'kill $server 2>/dev/null || true; print "Evidence retained at $work"' EXIT

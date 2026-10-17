@@ -13,9 +13,22 @@ struct FoundMedia {
     let url: URL
     let kind: Kind
     let title: String
-    let headers: [String: String]
+    var headers: [String: String]
     var fetcher: FrameFetcher?
     var subtitles: [RemoteSubtitle] = []
+    var cookies: [HTTPCookie] = []
+
+    func requestHeaders(for target: URL) -> [String: String] {
+        var result = headers
+        if cookies.isEmpty {
+            if target.host != url.host { result.removeValue(forKey: "Cookie") }
+        } else {
+            let storage = URLSessionConfiguration.ephemeral.httpCookieStorage!
+            for cookie in cookies { storage.setCookie(cookie) }
+            result["Cookie"] = HTTPCookie.requestHeaderFields(with: storage.cookies(for: target) ?? [])["Cookie"]
+        }
+        return result
+    }
 }
 
 enum YoinkError: LocalizedError {
@@ -51,6 +64,7 @@ final class Sniffer: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NSW
         let kind: String
         let page: String
         let documentID: String
+        let videoID: String
         let frame: WKFrameInfo
     }
 
@@ -59,7 +73,7 @@ final class Sniffer: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NSW
     private var pageWindow: NSWindow?
     var onPageClosed: (() -> Void)?
     private var candidates: [Candidate] = []
-    private var captions: [(track: RemoteSubtitle, documentID: String)] = []
+    private var captions: [(track: RemoteSubtitle, documentID: String, videoID: String)] = []
     private var firstFreshCandidate = 0
     private var startSite = ""
 
@@ -206,21 +220,16 @@ final class Sniffer: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NSW
         if let page = URL(string: chosen.page), let scheme = page.scheme, let host = page.host {
             headers["Origin"] = "\(scheme)://\(host)"
         }
-        let cookies = await webView.configuration.websiteDataStore.httpCookieStore.allCookies()
-            .filter { cookie in
-                let domain = cookie.domain.hasPrefix(".") ? String(cookie.domain.dropFirst()) : cookie.domain
-                return chosen.url.host?.hasSuffix(domain) ?? false
-            }
-        if !cookies.isEmpty {
-            headers["Cookie"] = cookies.map { "\($0.name)=\($0.value)" }.joined(separator: "; ")
-        }
+        let allCookies = await webView.configuration.websiteDataStore.httpCookieStore.allCookies()
         let kind: FoundMedia.Kind = switch Self.rank(chosen) {
         case 3: .hls
         case 2: .dash
         default: .file
         }
-        return FoundMedia(url: chosen.url, kind: kind, title: Self.cleanTitle(webView.title ?? ""), headers: headers,
-                          subtitles: captions.filter { $0.documentID == chosen.documentID }.map(\.track))
+        var media = FoundMedia(url: chosen.url, kind: kind, title: Self.cleanTitle(webView.title ?? ""), headers: headers,
+                               subtitles: captions.filter { !chosen.videoID.isEmpty && $0.documentID == chosen.documentID && $0.videoID == chosen.videoID }.map(\.track), cookies: allCookies)
+        media.headers = media.requestHeaders(for: chosen.url)
+        return media
     }
 
     private func best() -> Candidate? {
@@ -244,13 +253,15 @@ final class Sniffer: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NSW
         guard let body = message.body as? [String: Any],
               let text = body["url"] as? String, let url = URL(string: text), url.scheme?.hasPrefix("http") == true,
               let documentID = body["documentID"] as? String else { return }
+        let videoID = body["videoID"] as? String ?? ""
         if body["kind"] as? String == "subtitle" {
+            guard !videoID.isEmpty else { return }
             let track = RemoteSubtitle(url: url, language: SubtitleLanguage.canonical(body["language"] as? String))
-            if !captions.contains(where: { $0.track.url == url && $0.documentID == documentID }) { captions.append((track, documentID)) }
+            if !captions.contains(where: { $0.track.url == url && $0.documentID == documentID && $0.videoID == videoID }) { captions.append((track, documentID, videoID)) }
             return
         }
         log.info("candidate \(text, privacy: .public)")
-        candidates.append(Candidate(url: url, kind: body["kind"] as? String ?? "net", page: body["page"] as? String ?? "", documentID: documentID, frame: message.frameInfo))
+        candidates.append(Candidate(url: url, kind: body["kind"] as? String ?? "net", page: body["page"] as? String ?? "", documentID: documentID, videoID: videoID, frame: message.frameInfo))
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {

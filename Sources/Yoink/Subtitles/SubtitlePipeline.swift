@@ -108,6 +108,7 @@ enum SubtitlePipeline {
             guard let duration = inventory.format.duration.flatMap(Double.init), duration.isFinite, duration > 0 else {
                 throw YoinkError.downloadFailed("Couldn’t determine the audio duration for subtitles")
             }
+            _ = try SubtitleTime.duration(duration)
             language = SubtitleLanguage.canonical(audio.tags?["language"])
             let existingLanguages = Set(tracks.filter { $0.coverage == .full && $0.isReady }.map(\.language))
             if language != "und", language != "unknown", existingLanguages.contains(language), existingLanguages.contains("en") {

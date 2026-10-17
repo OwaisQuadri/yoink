@@ -53,10 +53,6 @@ final class Store {
             cancel(job)
         }
         folder = UserDefaults.standard.string(forKey: "folder").map { URL(fileURLWithPath: $0) }
-        let temporary = FileManager.default.temporaryDirectory
-        for name in (try? FileManager.default.contentsOfDirectory(atPath: temporary.path)) ?? [] where name.hasPrefix("yoink-") {
-            try? FileManager.default.removeItem(at: temporary.appendingPathComponent(name))
-        }
     }
 
     @discardableResult
@@ -120,6 +116,8 @@ final class Store {
                 job.title = media.title
                 job.state = .downloading
                 await download(job, media: media, folder: folder)
+            } else if media.fetcher != nil {
+                releaseSniffer()
             }
         }
     }

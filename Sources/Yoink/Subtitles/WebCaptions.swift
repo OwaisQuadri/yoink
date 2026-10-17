@@ -5,6 +5,11 @@ struct TransportEpoch {
     let transportStart: Int
 }
 
+enum TransportTimeline {
+    case available([TransportEpoch])
+    case unavailable(String)
+}
+
 enum WebCaptions {
     static func time(_ text: String) -> Int? {
         let parts = text.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".").split(separator: ":", omittingEmptySubsequences: false)
@@ -21,12 +26,16 @@ enum WebCaptions {
             let values = map.dropFirst("X-TIMESTAMP-MAP=".count).split(separator: ",")
             guard let localText = values.first(where: { $0.hasPrefix("LOCAL:") }),
                   let local = time(String(localText.dropFirst(6))),
-                  let mpegText = values.first(where: { $0.hasPrefix("MPEGTS:") }), let mpeg = Int64(mpegText.dropFirst(7)) else {
+                  let mpegText = values.first(where: { $0.hasPrefix("MPEGTS:") }), let mpeg = Int64(mpegText.dropFirst(7)), (0..<(Int64(1) << 33)).contains(mpeg) else {
                 throw YoinkError.downloadFailed("Invalid HLS subtitle timestamp map")
             }
             let wrap = Double(Int64(1) << 33) / 90
             let relative = Double(mpeg) / 90 - Double(videoStart) + Double(epochOffset)
-            offset = Int((relative + ((Double(segmentStart) - relative) / wrap).rounded() * wrap).rounded()) - local
+            let mapped = relative + ((Double(segmentStart) - relative) / wrap).rounded() * wrap
+            guard let mappedMilliseconds = Int(exactly: mapped.rounded()) else {
+                throw YoinkError.downloadFailed("Subtitle timestamp map is outside the supported range")
+            }
+            offset = try SubtitleTime.subtract(mappedMilliseconds, local)
         }
         var cues: [SubtitleCue] = []
         for (index, line) in lines.enumerated() where line.contains(" --> ") {
@@ -36,31 +45,59 @@ enum WebCaptions {
                 throw YoinkError.downloadFailed("Invalid subtitle cue timing")
             }
             let text = lines.dropFirst(index + 1).prefix { !$0.isEmpty }.joined(separator: "\n")
-            if !text.isEmpty, end + offset > 0 {
-                cues.append(SubtitleCue(start: max(0, start + offset), end: end + offset, text: text))
+            let mappedStart = try SubtitleTime.add(start, offset)
+            let mappedEnd = try SubtitleTime.add(end, offset)
+            if !text.isEmpty, mappedEnd > 0 {
+                cues.append(SubtitleCue(start: max(0, mappedStart), end: mappedEnd, text: text))
             }
         }
         return cues
     }
 
-    static func download(_ remote: RemoteSubtitle, media: FoundMedia, work: URL, epochs: [TransportEpoch], presentationShift: Int) async throws -> SubtitleTrack {
+    private static func byteRange(_ text: String) throws -> Range<Int> {
+        let parts = text.split(separator: "@", omittingEmptySubsequences: false)
+        guard parts.count == 2, let length = Int(parts[0]), length > 0, let start = Int(parts[1]), start >= 0 else {
+            throw YoinkError.downloadFailed("Invalid subtitle initialization byte range")
+        }
+        return start..<(try SubtitleTime.add(start, length))
+    }
+
+    static func download(_ remote: RemoteSubtitle, media: FoundMedia, work: URL, timeline: TransportTimeline, presentationShift: Int) async throws -> SubtitleTrack {
         let (data, _, _) = try await Downloader.get(media, remote.url)
         let text = String(decoding: data, as: UTF8.self)
         let output = work.appendingPathComponent("web-\(UUID().uuidString).srt")
         if text.hasPrefix("#EXTM3U") {
             guard !text.contains("#EXT-X-KEY") else { throw YoinkError.downloadFailed("Encrypted source subtitles are not supported") }
+            let epochs: [TransportEpoch]
+            switch timeline {
+            case .available(let available): epochs = available
+            case .unavailable(let reason): throw YoinkError.downloadFailed(reason)
+            }
             var all: [SubtitleCue] = []
             var segmentStart = 0
             var duration = 0
+            var initialization = ""
             for line in HLS.lines(text) {
                 if line.hasPrefix("#EXTINF:") {
-                    duration = Int(((Double(line.dropFirst(8).prefix { $0 != "," }) ?? 0) * 1000).rounded())
+                    guard let seconds = Double(line.dropFirst(8).prefix(while: { $0 != "," })) else {
+                        throw YoinkError.downloadFailed("Invalid subtitle segment duration")
+                    }
+                    duration = try SubtitleTime.duration(seconds)
+                } else if line.hasPrefix("#EXT-X-MAP:") {
+                    let attributes = HLS.attributes(line)
+                    guard let uri = attributes["URI"], let url = URL(string: uri, relativeTo: remote.url)?.absoluteURL else {
+                        throw YoinkError.downloadFailed("Invalid subtitle initialization section")
+                    }
+                    let range = try attributes["BYTERANGE"].map(byteRange)
+                    let (header, _, _) = try await Downloader.get(media, url, range: range)
+                    initialization = String(decoding: header, as: UTF8.self)
                 } else if !line.hasPrefix("#"), let url = URL(string: String(line), relativeTo: remote.url)?.absoluteURL {
                     let (segment, _, _) = try await Downloader.get(media, url)
                     let vtt = String(decoding: segment, as: UTF8.self)
                     let epoch = epochs.last { $0.start <= segmentStart } ?? TransportEpoch(start: 0, transportStart: 0)
-                    all += try cues(vtt, videoStart: epoch.transportStart, segmentStart: segmentStart, epochOffset: epoch.start + presentationShift)
-                    segmentStart += duration
+                    let content = vtt.contains("X-TIMESTAMP-MAP=") ? vtt : initialization + "\n\n" + vtt
+                    all += try cues(content, videoStart: epoch.transportStart, segmentStart: segmentStart, epochOffset: SubtitleTime.add(epoch.start, presentationShift))
+                    segmentStart = try SubtitleTime.add(segmentStart, duration)
                 }
             }
             var seen = Set<String>()

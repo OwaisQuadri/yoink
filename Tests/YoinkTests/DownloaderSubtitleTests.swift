@@ -26,6 +26,22 @@ final class DownloaderSubtitleTests: XCTestCase {
         }
     }
 
+    func testInvalidHLSEpochTimingStillSavesVideoWithCaptionWarning() async throws {
+        guard let address = ProcessInfo.processInfo.environment["YOINK_MEDIA_FIXTURE_URL"], let base = URL(string: address), base.pathExtension == "mp4" else {
+            throw XCTSkip("Run with the direct HTTP fixture to check malformed HLS source timing")
+        }
+        let url = base.deletingLastPathComponent().appendingPathComponent("hls/invalid-master.m3u8")
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("invalid-caption-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let output = directory.appendingPathComponent("saved.mp4")
+        let warning = try await Downloader.save(FoundMedia(url: url, kind: .hls, title: "Fixture", headers: [:]), to: output, onAcquired: {}, onSubtitles: { _, _ in }, onProgress: { _ in })
+        XCTAssertTrue(try XCTUnwrap(warning).contains("Source captions"))
+        let inventory = try await MediaInventory.read(output)
+        XCTAssertEqual(inventory.streams.filter { $0.codec_type == "video" }.count, 1)
+        XCTAssertEqual(inventory.streams.filter { $0.codec_type == "subtitle" }.count, 2)
+    }
+
     func testAcquiredMediaSavesOriginalAndEnglishAtExpectedTimes() async throws {
         guard let address = ProcessInfo.processInfo.environment["YOINK_MEDIA_FIXTURE_URL"], let url = URL(string: address) else {
             throw XCTSkip("Set YOINK_MEDIA_FIXTURE_URL for the local HTTP media fixture")

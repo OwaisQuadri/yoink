@@ -13,6 +13,8 @@ Yoink is a Mac app that saves the video from a web page as an MP4 file for offli
 
 Yoink keeps source text captions and generates missing original-language and English subtitles from the selected audio. English audio gets one English track, not a second translated copy. Forced-only captions do not replace full subtitles.
 
+HTML captions must belong to the selected video. If a blob player hides that ownership, Yoink uses manifest captions or audio generation instead of guessing.
+
 Subtitles are selectable MP4 tracks, never burned into the picture. In QuickTime Player, choose **View > Subtitles** to turn them on or off and select a language. Other players have their own subtitle controls.
 
 The app includes the multilingual Whisper `base` model and runs transcription and English translation on your Mac. It needs no account, API key, first-use model download, or speech service. Generated text can contain recognition and translation errors. Language detection uses the first audio chunk with detected speech. The selected language stays fixed for the rest of the video.
