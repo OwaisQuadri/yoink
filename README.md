@@ -9,6 +9,20 @@ Yoink is a Mac app that saves the video from a web page as an MP4 file for offli
 3. Click **Download**. The first time, choose the folder for your videos.
 4. When the row shows **Saved**, click **Play**, or open the file from the folder.
 
+## Subtitles
+
+Yoink keeps source text captions and generates missing original-language and English subtitles from the selected audio. English audio gets one English track, not a second translated copy. Forced-only captions do not replace full subtitles.
+
+HTML captions must belong to the selected video. If a blob player hides that ownership, Yoink uses manifest captions or audio generation instead of guessing.
+
+Subtitles are selectable MP4 tracks, never burned into the picture. In QuickTime Player, choose **View > Subtitles** to turn them on or off and select a language. Other players have their own subtitle controls.
+
+The app includes the multilingual Whisper `base` model and runs transcription and English translation on your Mac. It needs no account, API key, first-use model download, or speech service. Generated text can contain recognition and translation errors. Language detection uses the first audio chunk with detected speech. The selected language stays fixed for the rest of the video.
+
+If a subtitle track fails, Yoink saves the playable video and any usable tracks. The row shows **Saved with subtitle warning** and names the unavailable track. Hover over the warning to read the full reason. Bitmap captions cannot become MP4 text tracks, so Yoink reports them as unavailable and tries to generate replacements. Source styling becomes plain text.
+
+Generation runs one job at a time in five-minute audio chunks. Downloading other videos can continue. **Stop** cancels processing and waits for the active tool to exit before **Try Again** becomes available.
+
 ## How it works
 
 Yoink loads the page in a hidden web view inside the app. A script in every frame records the video requests that the player makes, and it starts playback with the sound muted. Yoink ignores ad videos and selects the HLS (HTTP Live Streaming) playlist, the DASH (Dynamic Adaptive Streaming over HTTP) manifest, or the direct file. It then gives that address, with the page's referrer and cookies, to the bundled `ffmpeg`. `ffmpeg` copies the highest quality stream into one MP4 file without re-encoding.
@@ -19,15 +33,29 @@ Yoink does not save DRM-protected (Digital Rights Management) video.
 
 ## Build
 
-Requires macOS 14 or newer and Xcode command-line tools.
+Requires macOS 14 or newer, Xcode command-line tools, and CMake. Build dependencies download over HTTPS.
 
 ```sh
 ./scripts/build-app.sh
 ```
 
-The script downloads a static universal `ffmpeg` once into `vendor/` and writes `build/Yoink.app`. With a Developer ID certificate in Keychain, it also signs the app and writes `build/Yoink.dmg`. It submits the disk image for notarization using the `yoink` Keychain profile, then staples and validates tickets for both the app and disk image. A failed notarization or ticket check fails the build. Set `YOINK_NOTARY_PROFILE` only to use a different `notarytool` Keychain profile.
+The script caches pinned `ffmpeg`, `ffprobe`, whisper.cpp source, and the multilingual model in `vendor/`. It verifies archive and model SHA-256 checksums, builds a universal CPU-only `whisper-cli`, and writes `build/Yoink.app`. The model adds 147,951,465 bytes to the bundle. The engine links only system libraries and does not require Homebrew on the playback Mac.
+
+Use `./scripts/build-app.sh --local` for an ad-hoc signed app without notarization or a disk image. This does not install the app.
+
+Without `--local`, a Developer ID certificate in Keychain enables signing and creation of `build/Yoink.dmg`. It submits the disk image for notarization using the `yoink` Keychain profile, then staples and validates tickets for both the app and disk image. A failed notarization or ticket check fails the build. Set `YOINK_NOTARY_PROFILE` only to use a different `notarytool` Keychain profile.
 
 The app embeds Sparkle from the version pinned in `Package.resolved`. The build script signs its framework, updater, installer, and downloader before signing the app.
+
+## Check subtitles locally
+
+Build with `./scripts/build-app.sh --local`, then run `swift test`. Live inference and HTTP downloader tests require fixtures. Run `zsh scripts/check-subtitles.sh` to create Spanish and English speech fixtures, exercise direct files, DASH, and HLS source captions with a timestamp discontinuity, and retain the output files for playback inspection. The check script requires Python 3 for a loopback HTTP server and uses macOS speech voices. Set `YOINK_CHECK_LONG=1` to include a 610-second chunk-boundary check.
+
+Open a saved MP4 in QuickTime Player. Select the original language, select English, and turn subtitles off. Check that the picture stays unchanged and the subtitles follow the speech. A successful subtitle test does not prove a model's accuracy for every language or recording.
+
+`scripts/build-subtitles.sh` pins whisper.cpp v1.8.2 and the model revision and checksums. Its narrow `stb_vorbis.c` patch compares an integer offset with the buffer length before pointer arithmetic. `Tests/Dependencies/stb-vorbis-bounds.c` checks the first byte, last byte, end of buffer, and `UINT_MAX` with undefined-behavior sanitization. The patch avoids an upstream pointer-overflow warning without removing the bounds check.
+
+Whisper and its model use the MIT license. The bundle includes `WHISPER-LICENSE` and `WHISPER-MODEL-LICENSE`. See the [whisper.cpp CLI documentation](https://github.com/ggml-org/whisper.cpp/blob/v1.8.2/examples/cli/README.md) and [OpenAI Whisper model license](https://github.com/openai/whisper/blob/main/LICENSE). FFmpeg and ffprobe retain their upstream licensing requirements.
 
 ## Prepare an update locally
 

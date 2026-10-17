@@ -7,6 +7,7 @@ struct HLSSegment {
     let byteRange: Range<Int>?
     let keyURL: URL?
     let iv: Data?
+    var isDiscontinuity = false
 }
 
 struct HLSTrack {
@@ -35,15 +36,15 @@ enum HLS {
         text.contains("#EXT-X-STREAM-INF")
     }
 
-    static func pickVariant(_ text: String, base: URL) -> (video: URL, audio: URL?)? {
+    static func pickVariant(_ text: String, base: URL) -> (video: URL, audio: URL?, subtitles: [RemoteSubtitle])? {
         let all = lines(text)
-        var best: (bandwidth: Int, url: URL, audioGroup: String?)?
+        var best: (bandwidth: Int, url: URL, audioGroup: String?, subtitleGroup: String?)?
         for (index, line) in all.enumerated() where line.hasPrefix("#EXT-X-STREAM-INF") {
             let attributes = attributes(line)
             guard index + 1 < all.count, !all[index + 1].hasPrefix("#"),
                   let url = URL(string: String(all[index + 1]), relativeTo: base)?.absoluteURL else { continue }
             let bandwidth = Int(attributes["BANDWIDTH"] ?? "") ?? 0
-            if bandwidth > best?.bandwidth ?? -1 { best = (bandwidth, url, attributes["AUDIO"]) }
+            if bandwidth > best?.bandwidth ?? -1 { best = (bandwidth, url, attributes["AUDIO"], attributes["SUBTITLES"]) }
         }
         guard let best else { return nil }
         let audio = best.audioGroup.flatMap { group in
@@ -52,7 +53,12 @@ enum HLS {
             let chosen = renditions.first { $0["DEFAULT"] == "YES" } ?? renditions.first
             return chosen.flatMap { URL(string: $0["URI"]!, relativeTo: base)?.absoluteURL }
         }
-        return (best.url, audio)
+        let subtitles = all.filter { $0.hasPrefix("#EXT-X-MEDIA") }.map(attributes).compactMap { rendition -> RemoteSubtitle? in
+            guard rendition["TYPE"] == "SUBTITLES", rendition["GROUP-ID"] == best.subtitleGroup,
+                  let uri = rendition["URI"], let url = URL(string: uri, relativeTo: base)?.absoluteURL else { return nil }
+            return RemoteSubtitle(url: url, language: SubtitleLanguage.canonical(rendition["LANGUAGE"]), isForced: rendition["FORCED"] == "YES")
+        }
+        return (best.url, audio, subtitles)
     }
 
     static func parseTrack(_ text: String, base: URL) throws -> HLSTrack {
@@ -63,8 +69,11 @@ enum HLS {
         var nextOffset = 0
         var keyURL: URL?
         var keyIV: Data?
+        var isDiscontinuity = false
         for line in lines(text) {
-            if line.hasPrefix("#EXT-X-MEDIA-SEQUENCE:") {
+            if line == "#EXT-X-DISCONTINUITY" {
+                isDiscontinuity = true
+            } else if line.hasPrefix("#EXT-X-MEDIA-SEQUENCE:") {
                 sequence = Int(line.dropFirst("#EXT-X-MEDIA-SEQUENCE:".count)) ?? 0
             } else if line.hasPrefix("#EXT-X-KEY") {
                 let attributes = attributes(line)
@@ -90,7 +99,10 @@ enum HLS {
                 nextOffset = byteRange?.upperBound ?? 0
             } else if !line.hasPrefix("#"), let url = URL(string: String(line), relativeTo: base)?.absoluteURL {
                 let iv = keyURL == nil ? nil : keyIV ?? sequenceIV(sequence)
-                track.segments.append(HLSSegment(url: url, duration: duration, byteRange: byteRange, keyURL: keyURL, iv: iv))
+                var segment = HLSSegment(url: url, duration: duration, byteRange: byteRange, keyURL: keyURL, iv: iv)
+                segment.isDiscontinuity = isDiscontinuity
+                track.segments.append(segment)
+                isDiscontinuity = false
                 sequence += 1
                 duration = 0
                 byteRange = nil
