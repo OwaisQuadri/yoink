@@ -14,7 +14,7 @@ final class SubtitlePipelineTests: XCTestCase {
         let source = work.appendingPathComponent("english.srt")
         try "1\n00:00:00,200 --> 00:00:01,500\nExisting English captions\n".write(to: source, atomically: true, encoding: .utf8)
         let video = work.appendingPathComponent("video.mkv")
-        _ = try await MediaCommand.run(Downloader.ffmpegURL, ["-v", "error", "-f", "lavfi", "-i", "color=s=160x90:d=2", "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono", "-i", source.path, "-map", "0:v", "-map", "1:a", "-map", "2:s", "-c:v", "libx264", "-c:a", "aac", "-c:s", "srt", "-metadata:s:a:0", "language=eng", "-metadata:s:s:0", "language=eng", "-t", "2", video.path])
+        _ = try await MediaCommand.run(Downloader.ffmpegURL, ["-v", "error", "-f", "lavfi", "-i", "color=s=160x90:d=2", "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono", "-i", source.path, "-map", "0:v", "-map", "1:a", "-map", "2:s", "-c:v", "h264_videotoolbox", "-c:a", "aac", "-c:s", "srt", "-metadata:s:a:0", "language=eng", "-metadata:s:s:0", "language=eng", "-t", "2", video.path])
         let outcome = try await SubtitlePipeline.complete(video: video, work: work, sourceTracks: []) { _, _ in }
         let tracks = outcome.readyTracks
         XCTAssertNil(outcome.warning)
@@ -36,7 +36,7 @@ final class SubtitlePipelineTests: XCTestCase {
     func testMissingAudioCannotBeReportedAsSubtitleSuccess() async throws {
         let work = try workspace()
         let video = work.appendingPathComponent("silent.mp4")
-        _ = try await MediaCommand.run(Downloader.ffmpegURL, ["-v", "error", "-f", "lavfi", "-i", "color=s=160x90:d=1", "-c:v", "libx264", video.path])
+        _ = try await MediaCommand.run(Downloader.ffmpegURL, ["-v", "error", "-f", "lavfi", "-i", "color=s=160x90:d=1", "-c:v", "h264_videotoolbox", video.path])
         let outcome = try await SubtitlePipeline.complete(video: video, work: work, sourceTracks: []) { _, _ in }
         XCTAssertTrue(outcome.readyTracks.isEmpty)
         XCTAssertTrue(try XCTUnwrap(outcome.warning).contains("no audio"))
@@ -83,7 +83,7 @@ final class SubtitlePipelineTests: XCTestCase {
         }
         let work = try workspace()
         let video = work.appendingPathComponent("silence.mp4")
-        _ = try await MediaCommand.run(Downloader.ffmpegURL, ["-v", "error", "-f", "lavfi", "-i", "color=s=160x90:d=3", "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono", "-c:v", "libx264", "-c:a", "aac", "-t", "3", video.path])
+        _ = try await MediaCommand.run(Downloader.ffmpegURL, ["-v", "error", "-f", "lavfi", "-i", "color=s=160x90:d=3", "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono", "-c:v", "h264_videotoolbox", "-c:a", "aac", "-t", "3", video.path])
         let outcome = try await SubtitlePipeline.complete(video: video, work: work, sourceTracks: []) { _, _ in }
         XCTAssertTrue(outcome.readyTracks.isEmpty)
         XCTAssertNotNil(outcome.warning)
@@ -92,7 +92,7 @@ final class SubtitlePipelineTests: XCTestCase {
     func testNoAudioRetainsUsableSourceCaptionsWithMissingOriginalWarning() async throws {
         let work = try workspace()
         let video = work.appendingPathComponent("no-audio.mp4")
-        _ = try await MediaCommand.run(Downloader.ffmpegURL, ["-v", "error", "-f", "lavfi", "-i", "color=s=160x90:d=2", "-c:v", "libx264", video.path])
+        _ = try await MediaCommand.run(Downloader.ffmpegURL, ["-v", "error", "-f", "lavfi", "-i", "color=s=160x90:d=2", "-c:v", "h264_videotoolbox", video.path])
         let captions = work.appendingPathComponent("english.srt")
         try "1\n00:00:00,100 --> 00:00:01,500\nKeep this source track\n".write(to: captions, atomically: true, encoding: .utf8)
         let source = SubtitleTrack(language: "en", source: .web, state: .ready(captions))

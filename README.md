@@ -2,6 +2,12 @@
 
 Yoink is a Mac app that saves the video from a web page as an MP4 file for offline playback.
 
+## License and responsible use
+
+Yoink's own code uses the [MIT license](LICENSE). Anyone can use, modify, and redistribute it, including commercially. Download only content you own or are authorized to save. Read the [responsible-use guidance](RESPONSIBLE_USE.md).
+
+Bundled dependencies keep their own licenses. The [third-party notices](THIRD_PARTY_NOTICES.md) and [license audit](docs/license-audit.md) describe their obligations and unresolved distribution blockers. MIT does not relicense the bundled LGPL FFmpeg tools.
+
 ## Use
 
 1. Open Yoink.
@@ -33,13 +39,15 @@ Yoink does not save DRM-protected (Digital Rights Management) video.
 
 ## Build
 
-Requires macOS 14 or newer, Xcode command-line tools, and CMake. Build dependencies download over HTTPS.
+The next version is 0.0.3/build 4. Its source-built FFmpeg tools replace the unverified binaries in withdrawn 0.0.2/build 3. Do not redistribute the withdrawn binaries. Publication still requires independent review and the release checks below.
+
+Requires macOS 14 or newer, Xcode command-line tools, CMake, and `pkg-config`. Build dependencies download over HTTPS.
 
 ```sh
 ./scripts/build-app.sh
 ```
 
-The script caches pinned `ffmpeg`, `ffprobe`, whisper.cpp source, and the multilingual model in `vendor/`. It verifies archive and model SHA-256 checksums, builds a universal CPU-only `whisper-cli`, and writes `build/Yoink.app`. The model adds 147,951,465 bytes to the bundle. The engine links only system libraries and does not require Homebrew on the playback Mac.
+The script caches pinned FFmpeg source, whisper.cpp source, and the multilingual model in `vendor/`. It verifies archive and model SHA-256 checksums. It builds universal LGPL `ffmpeg` and `ffprobe` from the official FFmpeg 9.0.2 source, plus a universal CPU-only `whisper-cli`, and writes `build/Yoink.app`. FFmpeg uses native codecs and macOS system libraries rather than unverified prebuilt codec libraries. See the [FFmpeg source and rebuild instructions](docs/ffmpeg-source.md). The model adds 147,951,465 bytes to the bundle. The engine links only system libraries and does not require Homebrew on the playback Mac.
 
 Use `./scripts/build-app.sh --local` for an ad-hoc signed app without notarization or a disk image. This does not install the app.
 
@@ -55,13 +63,13 @@ Open a saved MP4 in QuickTime Player. Select the original language, select Engli
 
 `scripts/build-subtitles.sh` pins whisper.cpp v1.8.2 and the model revision and checksums. Its narrow `stb_vorbis.c` patch compares an integer offset with the buffer length before pointer arithmetic. `Tests/Dependencies/stb-vorbis-bounds.c` checks the first byte, last byte, end of buffer, and `UINT_MAX` with undefined-behavior sanitization. The patch avoids an upstream pointer-overflow warning without removing the bounds check.
 
-Whisper and its model use the MIT license. The bundle includes `WHISPER-LICENSE` and `WHISPER-MODEL-LICENSE`. See the [whisper.cpp CLI documentation](https://github.com/ggml-org/whisper.cpp/blob/v1.8.2/examples/cli/README.md) and [OpenAI Whisper model license](https://github.com/openai/whisper/blob/main/LICENSE). FFmpeg and ffprobe retain their upstream licensing requirements.
+Whisper and its model use the MIT license. The bundle includes `WHISPER-LICENSE` and `WHISPER-MODEL-LICENSE`. `Contents/Resources/Legal/` also contains Yoink's MIT license, responsible-use guidance, full Sparkle and embedded Whisper notices, and the FFmpeg source package. See the [whisper.cpp CLI documentation](https://github.com/ggml-org/whisper.cpp/blob/v1.8.2/examples/cli/README.md) and [OpenAI Whisper model license](https://github.com/openai/whisper/blob/main/LICENSE). FFmpeg and ffprobe retain their upstream licensing requirements.
 
 ## Prepare an update locally
 
 1. For every release, increase both `CFBundleShortVersionString` (the displayed version) and `CFBundleVersion` (the build number) in `Resources/Info.plist`. Both must be greater than in the preceding release. Never reuse a release version or build number, or relabel an existing artifact. Sparkle compares the build number, not the displayed version.
 2. Build the final app with `./scripts/build-app.sh` and wait for notarization and ticket validation to succeed.
-3. Run `./scripts/generate-appcast.sh` on the signing Mac. It writes a versioned disk image and signed `appcast.xml` under `build/updates/`. It publishes nothing.
+3. Run `./scripts/generate-appcast.sh` on the signing Mac. It writes a versioned disk image, signed `appcast.xml`, FFmpeg source package, and `SHA256SUMS` under `build/updates/`. It publishes nothing.
 4. Before distribution, validate the original disk image with `xcrun stapler validate build/Yoink.dmg`. Generate the appcast again after any change to the disk image, including stapling.
 
 The script uses the per-app Keychain account matching `CFBundleIdentifier`, under the service `https://sparkle-project.org`. It checks the public key against `SUPublicEDKey` before signing. Keep this Keychain item safe and backed up. Do not regenerate or replace it for each release, and do not put private keys in the repository.
@@ -72,11 +80,12 @@ The generated feed and archive both carry EdDSA signatures. `SURequireSignedFeed
 
 Publication is separate from the local scripts and requires release approval.
 
-1. Complete the update checks below on the final artifact. Verify that both version values increased against the preceding release's verified signed appcast, or the pre-release source history for the first published release. This is a required manual publication check; the local generator does not query published releases.
-2. Create a GitHub release with the tag `v` followed by `CFBundleShortVersionString`.
-3. Attach both generated files from the versioned `build/updates/` directory. Keep their filenames unchanged. The appcast points to this specific tag's archive, not the mutable latest archive.
-4. Publish the release as the latest stable release. `SUFeedURL` in `Resources/Info.plist` resolves its `appcast.xml` asset.
-5. Download both assets from their published URLs and verify them with Sparkle's `sign_update --verify`, using the per-app `--account`. For the archive, supply the `sparkle:edSignature` from the appcast as the final argument.
+1. Complete the [license audit's distribution checks](docs/license-audit.md#distribution-hold-and-remediation). Verify the matching source, all dependency notices, and recipients' source access before publishing. Use the source-build pipeline, not the withdrawn provider binaries.
+2. Complete the update checks below on the final artifact. Verify that both version values increased against the preceding release's verified signed appcast, or the pre-release source history for the first published release. This is a required manual publication check; the local generator does not query published releases.
+3. Create a GitHub release with the tag `v` followed by `CFBundleShortVersionString`.
+4. Attach the disk image, `appcast.xml`, FFmpeg source package, and `SHA256SUMS` from the versioned `build/updates/` directory. Keep their filenames unchanged. The appcast points to this specific tag's archive, not the mutable latest archive. Keep the matching source available alongside each binary download.
+5. Publish the release as the latest stable release. `SUFeedURL` in `Resources/Info.plist` resolves its `appcast.xml` asset.
+6. Download all four assets from their published URLs. Run `shasum -a 256 -c SHA256SUMS`. Verify the appcast and disk image with Sparkle's `sign_update --verify`, using the per-app `--account`. For the disk image, supply the `sparkle:edSignature` from the appcast as the final argument. Extract the source package and compare its recipe and archive to the final app's embedded copy.
 
 Do not publish a new latest release without its appcast. Until the first release exists, manual checks report an update retrieval error. Existing copies without Sparkle need one manual installation of the first updater-enabled release.
 

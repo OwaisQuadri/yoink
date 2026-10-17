@@ -14,9 +14,9 @@ mkdir -p $work/site/hls $work/site/dash
 say -v 'Eddy (Spanish (Spain))' -r 145 -o $work/spanish.aiff 'Hola, buenos días. Hoy vamos a visitar la biblioteca. Me gusta leer libros y aprender idiomas. Después vamos a tomar un café con nuestros amigos.'
 say -v 'Eddy (English (US))' -o $work/english.aiff 'Hello, good morning. Today we are going to visit the library. I like reading books and learning new languages. After that we will have coffee with our friends.'
 for language in spanish english; do
-  $ffmpeg -v error -y -f lavfi -i color=c=navy:s=640x360:r=25 -i $work/$language.aiff -c:v libx264 -c:a aac -af apad -t 9 $work/site/$language.mp4
+  $ffmpeg -v error -y -f lavfi -i color=c=navy:s=640x360:r=25 -i $work/$language.aiff -c:v h264_videotoolbox -c:a aac -af apad -t 9 $work/site/$language.mp4
 done
-$ffmpeg -v error -y -i $work/site/spanish.mp4 -c:v libx264 -force_key_frames 'expr:gte(t,n_forced*3)' -c:a copy -f hls -hls_time 3 -hls_list_size 0 -hls_segment_filename $work/site/hls/seg%d.ts $work/site/hls/video.m3u8
+$ffmpeg -v error -y -i $work/site/spanish.mp4 -c:v h264_videotoolbox -force_key_frames 'expr:gte(t,n_forced*3)' -c:a copy -f hls -hls_time 3 -hls_list_size 0 -hls_segment_filename $work/site/hls/seg%d.ts $work/site/hls/video.m3u8
 $ffmpeg -v error -y -i $work/site/spanish.mp4 -c copy -f dash $work/site/dash/manifest.mpd
 video=$work/site/hls/video.m3u8
 body=$(sed -n '/#EXTINF:/,$p' $video | sed '/#EXT-X-ENDLIST/d')
