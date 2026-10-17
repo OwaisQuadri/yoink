@@ -63,4 +63,4 @@ cp docs/ffmpeg-source.md $package/README.md
   print "pkg-config $(pkg-config --version)"
   print "FFmpeg source SHA-256 $archive_sha"
 } > $package/BUILD-ENVIRONMENT.txt
-COPYFILE_DISABLE=1 tar -czf build/Yoink-FFmpeg-$version-source.tar.gz -C $package .
+COPYFILE_DISABLE=1 tar --uid 0 --gid 0 --numeric-owner -czf build/Yoink-FFmpeg-$version-source.tar.gz -C $package .
