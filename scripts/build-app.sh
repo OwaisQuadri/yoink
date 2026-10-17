@@ -25,6 +25,7 @@ rm -rf $app
 mkdir -p $app/Contents/MacOS $app/Contents/Resources $app/Contents/Frameworks
 ditto $sparkle $app/Contents/Frameworks/Sparkle.framework
 lipo -create build/bin/Yoink-arm64 build/bin/Yoink-x86_64 -output $app/Contents/MacOS/Yoink
+xcrun strip -S $app/Contents/MacOS/Yoink
 cp Sources/Yoink/Sniffer.js $app/Contents/Resources/Sniffer.js
 cp $vendor/ffmpeg $vendor/ffprobe $app/Contents/Resources/
 cp vendor/whisper/whisper-cli vendor/whisper/ggml-base.bin vendor/whisper/WHISPER-LICENSE Resources/WHISPER-MODEL-LICENSE $app/Contents/Resources/
