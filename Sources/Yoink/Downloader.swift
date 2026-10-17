@@ -87,18 +87,18 @@ enum Downloader {
     static func save(
         _ media: FoundMedia,
         to output: URL,
+        work: URL = FileManager.default.temporaryDirectory.appendingPathComponent("yoink-\(UUID().uuidString)"),
         onAcquired: @escaping @MainActor () -> Void,
         onSubtitles: @escaping @MainActor (SubtitlePhase, [SubtitleTrack]) -> Void,
         onProgress: @escaping @MainActor (Double) -> Void
     ) async throws -> String? {
-        let work = FileManager.default.temporaryDirectory.appendingPathComponent("yoink-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: work) }
         let tracker = await ProgressTracker(onProgress: onProgress)
 
         let staged: URL
         let sourceTracks: [SubtitleTrack]
         do {
+            try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
             (staged, sourceTracks) = try await acquire(media, work: work, tracker: tracker)
             await onAcquired()
         } catch {

@@ -2,6 +2,36 @@ import XCTest
 @testable import Yoink
 
 final class DownloaderSubtitleTests: XCTestCase {
+    @MainActor
+    func testWorkspaceSetupFailureReleasesAcquisitionExactlyOnce() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("yoink-setup-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let blocker = directory.appendingPathComponent("file")
+        try Data("not a directory".utf8).write(to: blocker)
+        let work = blocker.appendingPathComponent("work")
+        let output = directory.appendingPathComponent("saved.mp4")
+        let media = FoundMedia(url: URL(string: "https://example.com/video.mp4")!, kind: .file, title: "Fixture", headers: [:])
+        var acquisitionReleases = 0
+
+        do {
+            _ = try await Downloader.save(media, to: output, work: work, onAcquired: {
+                acquisitionReleases += 1
+            }, onSubtitles: { _, _ in XCTFail("Setup failure must not start subtitles") }, onProgress: { _ in
+                XCTFail("Setup failure must not start acquisition")
+            })
+            XCTFail("A file cannot contain the workspace directory")
+        } catch {
+            XCTAssertEqual((error as NSError).domain, NSCocoaErrorDomain)
+        }
+
+        XCTAssertEqual(acquisitionReleases, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: work.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: output.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: output.appendingPathExtension("part").path))
+        XCTAssertEqual(try Data(contentsOf: blocker), Data("not a directory".utf8))
+    }
+
     func testCancellationDuringSubtitleStagesNeverPublishesVideoOrPartialFile() async throws {
         guard let address = ProcessInfo.processInfo.environment["YOINK_MEDIA_FIXTURE_URL"], let url = URL(string: address), url.pathExtension == "mp4" else {
             throw XCTSkip("Run with the direct Spanish HTTP fixture for cancellation checks")
