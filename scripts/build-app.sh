@@ -6,6 +6,10 @@ app=build/Yoink.app
 vendor=vendor/ffmpeg
 is_local=0
 if [[ ${1:-} == --local ]]; then is_local=1; fi
+if (( ! is_local )); then
+  print -u2 'Distribution build blocked: matching FFmpeg/ffprobe and static dependency corresponding source is unverified. See docs/license-audit.md. Use --local only for a non-distribution build.'
+  exit 1
+fi
 
 while read -r arch revision tool sha; do
   directory=$vendor/$revision
@@ -46,6 +50,11 @@ lipo -create build/bin/Yoink-arm64 build/bin/Yoink-x86_64 -output $app/Contents/
 cp Sources/Yoink/Sniffer.js $app/Contents/Resources/Sniffer.js
 cp $vendor/ffmpeg $vendor/ffprobe $app/Contents/Resources/
 cp vendor/whisper/whisper-cli vendor/whisper/ggml-base.bin vendor/whisper/WHISPER-LICENSE Resources/WHISPER-MODEL-LICENSE $app/Contents/Resources/
+mkdir -p $app/Contents/Resources/Legal/Resources $app/Contents/Resources/Legal/docs
+cp LICENSE RESPONSIBLE_USE.md THIRD_PARTY_NOTICES.md $app/Contents/Resources/Legal/
+cp -R Resources/Licenses $app/Contents/Resources/Legal/Resources/
+cp Resources/WHISPER-MODEL-LICENSE $app/Contents/Resources/Legal/Resources/
+cp docs/license-audit.md $app/Contents/Resources/Legal/docs/
 cp Resources/Info.plist $app/Contents/Info.plist
 identity=""
 if (( ! is_local )); then

@@ -39,6 +39,8 @@ Yoink does not save DRM-protected (Digital Rights Management) video.
 
 ## Build
 
+Distribution builds are blocked while the [FFmpeg corresponding-source gap](docs/license-audit.md#ffmpeg-source-and-dependency-blocker) remains unresolved. `--local` is available for development only. Do not distribute these builds.
+
 Requires macOS 14 or newer, Xcode command-line tools, and CMake. Build dependencies download over HTTPS.
 
 ```sh
@@ -78,11 +80,12 @@ The generated feed and archive both carry EdDSA signatures. `SURequireSignedFeed
 
 Publication is separate from the local scripts and requires release approval.
 
-1. Complete the update checks below on the final artifact. Verify that both version values increased against the preceding release's verified signed appcast, or the pre-release source history for the first published release. This is a required manual publication check; the local generator does not query published releases.
-2. Create a GitHub release with the tag `v` followed by `CFBundleShortVersionString`.
-3. Attach both generated files from the versioned `build/updates/` directory. Keep their filenames unchanged. The appcast points to this specific tag's archive, not the mutable latest archive.
-4. Publish the release as the latest stable release. `SUFeedURL` in `Resources/Info.plist` resolves its `appcast.xml` asset.
-5. Download both assets from their published URLs and verify them with Sparkle's `sign_update --verify`, using the per-app `--account`. For the archive, supply the `sparkle:edSignature` from the appcast as the final argument.
+1. Resolve every distribution blocker in the [license audit](docs/license-audit.md#distribution-hold-and-remediation). Verify the matching source, all dependency notices, and recipients' source access before publishing. Do not bypass the build stop.
+2. Complete the update checks below on the final artifact. Verify that both version values increased against the preceding release's verified signed appcast, or the pre-release source history for the first published release. This is a required manual publication check; the local generator does not query published releases.
+3. Create a GitHub release with the tag `v` followed by `CFBundleShortVersionString`.
+4. Attach both generated files from the versioned `build/updates/` directory. Keep their filenames unchanged. The appcast points to this specific tag's archive, not the mutable latest archive.
+5. Publish the release as the latest stable release. `SUFeedURL` in `Resources/Info.plist` resolves its `appcast.xml` asset.
+6. Download both assets from their published URLs and verify them with Sparkle's `sign_update --verify`, using the per-app `--account`. For the archive, supply the `sparkle:edSignature` from the appcast as the final argument.
 
 Do not publish a new latest release without its appcast. Until the first release exists, manual checks report an update retrieval error. Existing copies without Sparkle need one manual installation of the first updater-enabled release.
 
