@@ -2,6 +2,12 @@
 
 Yoink is a Mac app that saves the video from a web page as an MP4 file for offline playback.
 
+## License and responsible use
+
+Yoink's own code uses the [MIT license](LICENSE). Anyone can use, modify, and redistribute it, including commercially. Download only content you own or are authorized to save. Read the [responsible-use guidance](RESPONSIBLE_USE.md).
+
+Bundled dependencies keep their own licenses. The [third-party notices](THIRD_PARTY_NOTICES.md) and [license audit](docs/license-audit.md) describe their obligations and unresolved distribution blockers. MIT does not relicense the bundled GPL FFmpeg tools.
+
 ## Use
 
 1. Open Yoink.
