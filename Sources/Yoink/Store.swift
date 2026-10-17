@@ -8,10 +8,11 @@ final class Job: Identifiable {
         case waiting
         case finding
         case downloading
-        case saved(URL)
+        case subtitling(SubtitlePhase)
+        case saved(URL, warning: String?)
         case failed(String)
+        case stopping
         case cancelled
-        case aborted
     }
 
     let id = UUID()
@@ -20,7 +21,7 @@ final class Job: Identifiable {
     var state: State = .waiting
     var fraction: Double?
     var secondsLeft: Double?
-    @ObservationIgnored var process: Process?
+    var subtitles: [SubtitleTrack] = []
     @ObservationIgnored var task: Task<Void, Never>?
 
     init(pageURL: URL) {
@@ -30,7 +31,7 @@ final class Job: Identifiable {
 
     var isActive: Bool {
         switch state {
-        case .waiting, .finding, .downloading: true
+        case .waiting, .finding, .downloading, .subtitling, .stopping: true
         default: false
         }
     }
@@ -50,7 +51,6 @@ final class Store {
         sniffer.onPageClosed = { [weak self] in
             guard let self, let job = jobs.first(where: { $0.state == .finding }) else { return }
             cancel(job)
-            job.state = .aborted
         }
         folder = UserDefaults.standard.string(forKey: "folder").map { URL(fileURLWithPath: $0) }
         let temporary = FileManager.default.temporaryDirectory
@@ -81,15 +81,16 @@ final class Store {
     }
 
     func cancel(_ job: Job) {
-        job.state = .cancelled
+        guard job.isActive else { return }
+        job.state = job.task == nil ? .cancelled : .stopping
         job.task?.cancel()
-        job.process?.terminate()
     }
 
     func retry(_ job: Job) {
         job.state = .waiting
         job.fraction = nil
         job.secondsLeft = nil
+        job.subtitles = []
         startNext()
     }
 
@@ -102,6 +103,10 @@ final class Store {
         isFinding = true
         job.state = .finding
         job.task = Task {
+            defer {
+                job.task = nil
+                if job.state == .stopping { job.state = .cancelled }
+            }
             let media: FoundMedia
             do {
                 media = try await sniffer.find(job.pageURL)
@@ -116,7 +121,6 @@ final class Store {
                 job.state = .downloading
                 await download(job, media: media, folder: folder)
             }
-            if media.fetcher != nil { releaseSniffer() }
         }
     }
 
@@ -128,21 +132,31 @@ final class Store {
 
     private func download(_ job: Job, media: FoundMedia, folder: URL) async {
         let output = Self.freeURL(in: folder, name: media.title)
-        let process = Process()
-        job.process = process
         let started = Date()
         do {
-            try await Downloader.save(media, to: output, process: process) { fraction in
+            let warning = try await Downloader.save(media, to: output, onAcquired: {
+                if media.fetcher != nil { self.releaseSniffer() }
+            }, onSubtitles: { phase, tracks in
+                if job.state != .cancelled, job.state != .stopping {
+                    job.state = .subtitling(phase)
+                    job.subtitles = tracks
+                    job.fraction = nil
+                    job.secondsLeft = nil
+                }
+            }) { fraction in
                 job.fraction = fraction
                 let elapsed = Date().timeIntervalSince(started)
                 job.secondsLeft = fraction > 0.01 ? elapsed / fraction - elapsed : nil
             }
-            job.state = .saved(output)
+            if Task.isCancelled {
+                try? FileManager.default.removeItem(at: output)
+                throw CancellationError()
+            }
+            job.state = .saved(output, warning: warning)
         } catch {
             log.error("download failed \(job.pageURL.absoluteString, privacy: .public): \(String(describing: error), privacy: .public)")
-            if job.state != .cancelled { job.state = .failed(error.localizedDescription) }
+            if job.state != .cancelled, job.state != .stopping { job.state = .failed(error.localizedDescription) }
         }
-        job.process = nil
     }
 
     private static func freeURL(in folder: URL, name: String) -> URL {

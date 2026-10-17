@@ -15,7 +15,10 @@ struct SubtitleTrack: Identifiable, Equatable {
         case failed(String)
     }
 
+    enum Coverage { case full, forced }
+
     let id: UUID
+    var coverage: Coverage = .full
     var language: String
     let source: Source
     var state: State
@@ -27,9 +30,28 @@ struct SubtitleTrack: Identifiable, Equatable {
         self.state = state
     }
 
+    var isReady: Bool {
+        if case .ready = state { return true }
+        return false
+    }
+
     var title: String {
-        let name = Locale.current.localizedString(forLanguageCode: language) ?? language
-        return "\(name) · \(source.rawValue)"
+        let name = language == "und" ? "Original" : Locale.current.localizedString(forLanguageCode: language) ?? language
+        return "\(name) · \(source.rawValue)\(coverage == .forced ? " (forced only)" : "")"
+    }
+}
+
+struct SubtitleOutcome {
+    let tracks: [SubtitleTrack]
+
+    var readyTracks: [SubtitleTrack] { tracks.filter(\.isReady) }
+
+    var warning: String? {
+        let failures = tracks.compactMap { track -> String? in
+            guard case .failed(let reason) = track.state else { return nil }
+            return "\(track.title) unavailable. \(reason)"
+        }
+        return failures.isEmpty ? nil : failures.joined(separator: " ")
     }
 }
 

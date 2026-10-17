@@ -4,15 +4,30 @@ cd "${0:A:h}/.."
 
 app=build/Yoink.app
 vendor=vendor/ffmpeg
+is_local=0
+if [[ ${1:-} == --local ]]; then is_local=1; fi
 
-if [[ ! -x $vendor/ffmpeg ]]; then
-  mkdir -p $vendor
-  for arch in arm64 amd64; do
-    curl -fsSL -o $vendor/$arch.zip "https://ffmpeg.martin-riedl.de/redirect/latest/macos/$arch/release/ffmpeg.zip"
-    unzip -oq $vendor/$arch.zip -d $vendor/$arch
-  done
-  lipo -create $vendor/arm64/ffmpeg $vendor/amd64/ffmpeg -output $vendor/ffmpeg
-fi
+while read -r arch revision tool sha; do
+  directory=$vendor/$revision
+  mkdir -p $directory
+  archive=$directory/$tool-$arch.zip
+  if [[ ! -f $archive ]]; then
+    curl -fsSL -o $archive.part "https://ffmpeg.martin-riedl.de/download/macos/$arch/$revision/$tool.zip"
+    echo "$sha  $archive.part" | shasum -a 256 -c -
+    mv $archive.part $archive
+  fi
+  echo "$sha  $archive" | shasum -a 256 -c -
+  unzip -oq $archive -d $directory
+done <<'ASSETS'
+arm64 1789931890_9.0.2 ffmpeg c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924
+arm64 1789931890_9.0.2 ffprobe fcbe839537485eaee7a7a8bc5cbc0f90d53617e80943e8a5b2e31cb851197ea6
+amd64 1789931006_9.0.2 ffmpeg 7c6b4125b191cbf773832dc51f424cf2b6bb7da43007d1e066f95909e47cacd4
+amd64 1789931006_9.0.2 ffprobe 2322438ed2f6319a691291b247d09c69dcaa3a982460d1f269a7e1af335cfdfd
+ASSETS
+for tool in ffmpeg ffprobe; do
+  lipo -create $vendor/1789931890_9.0.2/$tool $vendor/1789931006_9.0.2/$tool -output $vendor/$tool
+done
+zsh scripts/build-subtitles.sh
 
 minimum_system=$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' Resources/Info.plist)
 mkdir -p build/bin
@@ -29,9 +44,13 @@ mkdir -p $app/Contents/MacOS $app/Contents/Resources $app/Contents/Frameworks
 ditto $sparkle $app/Contents/Frameworks/Sparkle.framework
 lipo -create build/bin/Yoink-arm64 build/bin/Yoink-x86_64 -output $app/Contents/MacOS/Yoink
 cp Sources/Yoink/Sniffer.js $app/Contents/Resources/Sniffer.js
-cp $vendor/ffmpeg $app/Contents/Resources/ffmpeg
+cp $vendor/ffmpeg $vendor/ffprobe $app/Contents/Resources/
+cp vendor/whisper/whisper-cli vendor/whisper/ggml-base.bin vendor/whisper/WHISPER-LICENSE Resources/WHISPER-MODEL-LICENSE $app/Contents/Resources/
 cp Resources/Info.plist $app/Contents/Info.plist
-identity=$(security find-identity -v -p codesigning | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' | head -1)
+identity=""
+if (( ! is_local )); then
+  identity=$(security find-identity -v -p codesigning | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' | head -1)
+fi
 signing=(--force --sign "${identity:--}")
 if [[ -n $identity ]]; then
   signing+=(--options runtime --timestamp)
@@ -42,7 +61,9 @@ codesign $signing --preserve-metadata=entitlements $framework/Versions/B/XPCServ
 codesign $signing $framework/Versions/B/Autoupdate
 codesign $signing $framework/Versions/B/Updater.app
 codesign $signing $framework
-codesign $signing $app/Contents/Resources/ffmpeg
+for tool in ffmpeg ffprobe whisper-cli; do
+  codesign $signing $app/Contents/Resources/$tool
+done
 codesign $signing $app
 codesign --verify --deep --strict --verbose=2 $app
 if [[ -z $identity ]]; then

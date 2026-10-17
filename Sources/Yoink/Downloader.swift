@@ -20,8 +20,7 @@ enum Downloader {
     private static let chunkSize = 5 << 20
 
     static var ffmpegURL: URL {
-        if let bundled = Bundle.main.url(forResource: "ffmpeg", withExtension: nil) { return bundled }
-        return URL(fileURLWithPath: "/opt/homebrew/bin/ffmpeg")
+        MediaCommand.tool("ffmpeg")
     }
 
     static func fetch(_ url: URL, headers: [String: String], range: Range<Int>? = nil, attempts: Int = 3, timeout: TimeInterval = 30) async throws -> (Data, HTTPURLResponse) {
@@ -88,23 +87,59 @@ enum Downloader {
     static func save(
         _ media: FoundMedia,
         to output: URL,
-        process: Process,
+        onAcquired: @escaping @MainActor () -> Void,
+        onSubtitles: @escaping @MainActor (SubtitlePhase, [SubtitleTrack]) -> Void,
         onProgress: @escaping @MainActor (Double) -> Void
-    ) async throws {
+    ) async throws -> String? {
         let work = FileManager.default.temporaryDirectory.appendingPathComponent("yoink-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: work) }
         let tracker = await ProgressTracker(onProgress: onProgress)
 
+        let staged: URL
+        let sourceTracks: [SubtitleTrack]
+        do {
+            (staged, sourceTracks) = try await acquire(media, work: work, tracker: tracker)
+            await onAcquired()
+        } catch {
+            await onAcquired()
+            throw error
+        }
+        let outcome = try await SubtitlePipeline.complete(video: staged, work: work, sourceTracks: sourceTracks, onUpdate: onSubtitles)
+        var warning = outcome.warning
+        let partial = output.appendingPathExtension("part")
+        defer { try? FileManager.default.removeItem(at: partial) }
+        do {
+            try await SubtitlePipeline.mux(video: staged, tracks: outcome.readyTracks, to: partial)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            guard !outcome.readyTracks.isEmpty else { throw error }
+            try await SubtitlePipeline.mux(video: staged, tracks: [], to: partial)
+            var tracks = outcome.tracks
+            for index in tracks.indices where tracks[index].isReady { tracks[index].state = .failed("Couldn’t embed the subtitle track") }
+            warning = SubtitleOutcome(tracks: tracks).warning
+            await onSubtitles(.muxing, tracks)
+        }
+        try Task.checkCancellation()
+        try FileManager.default.moveItem(at: partial, to: output)
+        return warning
+    }
+
+    private static func acquire(_ media: FoundMedia, work: URL, tracker: ProgressTracker) async throws -> (URL, [SubtitleTrack]) {
         let inputs: [String]
+        var subtitles = media.subtitles
+        var epochs: [TransportEpoch] = []
         switch media.kind {
         case .hls:
-            let tracks = try await hlsTracks(media)
+            let (tracks, renditions) = try await hlsTracks(media)
+            subtitles += renditions
             await MainActor.run { tracker.total = tracks.reduce(0) { $0 + $1.segments.count } }
             var files: [String] = []
             for (index, track) in tracks.enumerated() {
                 let file = work.appendingPathComponent("track\(index)")
-                try await download(track, media: media, to: file, tracker: tracker)
+                let timeline = try await download(track, media: media, to: file, tracker: tracker, isVideo: index == 0)
+                if index == 0 { epochs = timeline }
                 files.append(file.path)
             }
             inputs = files
@@ -112,30 +147,52 @@ enum Downloader {
             let track = try await fileTrack(media)
             await MainActor.run { tracker.total = track.segments.count }
             let file = work.appendingPathComponent("file")
-            try await download(track, media: media, to: file, tracker: tracker)
+            _ = try await download(track, media: media, to: file, tracker: tracker)
             inputs = [file.path]
         case .dash:
             inputs = [media.url.absoluteString]
         }
-
-        let partial = output.appendingPathExtension("part")
-        defer { try? FileManager.default.removeItem(at: partial) }
-        try await remux(inputs, headers: media.kind == .dash ? media.headers : [:], to: partial, process: process)
-        try FileManager.default.moveItem(at: partial, to: output)
+        var sourceTracks: [SubtitleTrack] = []
+        for input in inputs {
+            do {
+                sourceTracks += try await SubtitlePipeline.extractSources(input: input, headers: media.kind == .dash ? media.headers : [:], work: work)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                sourceTracks.append(SubtitleTrack(language: "und", source: .embedded, state: .failed("Couldn’t inspect source captions")))
+            }
+        }
+        let staged = work.appendingPathComponent("video.mkv")
+        try await remux(inputs, audioInput: inputs.count > 1 ? 1 : 0, headers: media.kind == .dash ? media.headers : [:], to: staged)
+        let stagedInventory = try await MediaInventory.read(staged)
+        let videoStart = stagedInventory.streams.first { $0.codec_type == "video" }?.start_time.flatMap(Double.init) ?? 0
+        let formatStart = stagedInventory.format.start_time.flatMap(Double.init) ?? 0
+        let presentationShift = Int(((videoStart - formatStart) * 1000).rounded())
+        var seen = Set<URL>()
+        for remote in subtitles where seen.insert(remote.url).inserted {
+            do {
+                sourceTracks.append(try await WebCaptions.download(remote, media: media, work: work, epochs: epochs, presentationShift: presentationShift))
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                sourceTracks.append(SubtitleTrack(language: remote.language, source: .web, state: .failed("Couldn’t download source captions")))
+            }
+        }
+        return (staged, sourceTracks)
     }
 
-    private static func hlsTracks(_ media: FoundMedia) async throws -> [HLSTrack] {
+    private static func hlsTracks(_ media: FoundMedia) async throws -> ([HLSTrack], [RemoteSubtitle]) {
         let (data, _, _) = try await get(media, media.url)
         let text = String(decoding: data, as: UTF8.self)
         guard HLS.isMaster(text), let variant = HLS.pickVariant(text, base: media.url) else {
-            return [try HLS.parseTrack(text, base: media.url)]
+            return ([try HLS.parseTrack(text, base: media.url)], [])
         }
         var tracks: [HLSTrack] = []
         for url in [variant.video, variant.audio].compactMap({ $0 }) {
             let (trackData, _, _) = try await get(media, url)
             tracks.append(try HLS.parseTrack(String(decoding: trackData, as: UTF8.self), base: url))
         }
-        return tracks
+        return (tracks, variant.subtitles)
     }
 
     static func fileTrack(_ media: FoundMedia) async throws -> HLSTrack {
@@ -149,13 +206,17 @@ enum Downloader {
         return HLSTrack(segments: segments)
     }
 
-    private static func download(_ track: HLSTrack, media: FoundMedia, to file: URL, tracker: ProgressTracker) async throws {
+    private static func download(_ track: HLSTrack, media: FoundMedia, to file: URL, tracker: ProgressTracker, isVideo: Bool = false) async throws -> [TransportEpoch] {
         FileManager.default.createFile(atPath: file.path, contents: nil)
         let handle = try FileHandle(forWritingTo: file)
         defer { try? handle.close() }
+        var initialization = Data()
         if let initSegment = track.initSegment {
-            try handle.write(contentsOf: try await get(media, initSegment.url, range: initSegment.byteRange).data)
+            initialization = try await get(media, initSegment.url, range: initSegment.byteRange).data
+            try handle.write(contentsOf: initialization)
         }
+        var epochs: [TransportEpoch] = []
+        var elapsed = 0.0
         var keys: [URL: Data] = [:]
         for url in Set(track.segments.compactMap(\.keyURL)) {
             keys[url] = try await get(media, url).data
@@ -185,7 +246,18 @@ enum Downloader {
             for try await (index, data) in group {
                 pending[index] = data
                 while let ready = pending.removeValue(forKey: nextWrite) {
+                    if isVideo, nextWrite == 0 || segments[nextWrite].isDiscontinuity {
+                        let probe = file.appendingPathExtension("epoch")
+                        defer { try? FileManager.default.removeItem(at: probe) }
+                        try (initialization + ready).write(to: probe)
+                        let inventory = try await MediaInventory.read(probe)
+                        guard let start = inventory.streams.first(where: { $0.codec_type == "video" })?.start_time.flatMap(Double.init), start.isFinite else {
+                            throw YoinkError.downloadFailed("Couldn’t align HLS subtitle timestamps")
+                        }
+                        epochs.append(TransportEpoch(start: Int((elapsed * 1000).rounded()), transportStart: Int((start * 1000).rounded())))
+                    }
                     try handle.write(contentsOf: ready)
+                    elapsed += segments[nextWrite].duration
                     nextWrite += 1
                 }
                 await tracker.advance()
@@ -195,31 +267,19 @@ enum Downloader {
                 }
             }
         }
+        return epochs
     }
 
-    private static func remux(_ inputs: [String], headers: [String: String], to output: URL, process: Process) async throws {
+    private static func remux(_ inputs: [String], audioInput: Int, headers: [String: String], to output: URL) async throws {
         var arguments = ["-hide_banner", "-nostdin", "-y", "-loglevel", "error"]
-        if !headers.isEmpty {
-            arguments += ["-user_agent", Sniffer.userAgent, "-headers", headers.map { "\($0.key): \($0.value)\r\n" }.joined()]
+        for input in inputs {
+            if !headers.isEmpty {
+                arguments += ["-user_agent", Sniffer.userAgent, "-headers", headers.map { "\($0.key): \($0.value)\r\n" }.joined()]
+            }
+            arguments += ["-i", input]
         }
-        for input in inputs { arguments += ["-i", input] }
-        arguments += ["-map", "0:v:0?"]
-        arguments += inputs.count > 1 ? ["-map", "1:a:0?"] : ["-map", "0:a:0?"]
-        arguments += ["-c", "copy", "-movflags", "+faststart", "-f", "mp4", output.path]
-        process.executableURL = ffmpegURL
-        process.arguments = arguments
-        let errors = Pipe()
-        process.standardError = errors
-        process.standardOutput = FileHandle.nullDevice
-        try process.run()
-        let (status, message) = await Task.detached {
-            let data = errors.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            return (process.terminationStatus, String(decoding: data, as: UTF8.self))
-        }.value
-        try Task.checkCancellation()
-        guard status == 0 else {
-            throw YoinkError.downloadFailed(message.split(separator: "\n").last.map(String.init) ?? "Couldn’t save the video")
-        }
+        arguments += ["-map", "0:v:0?", "-map", "\(audioInput):a:0?"]
+        arguments += ["-c", "copy", "-f", "matroska", output.path]
+        _ = try await MediaCommand.run(ffmpegURL, arguments)
     }
 }

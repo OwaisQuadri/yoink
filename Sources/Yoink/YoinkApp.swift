@@ -145,7 +145,7 @@ struct JobRow: View {
                     .font(.headline)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                if job.state == .downloading || job.state == .finding {
+                if job.isActive, job.state != .waiting {
                     if let fraction = job.fraction {
                         ProgressView(value: fraction)
                     } else {
@@ -154,8 +154,15 @@ struct JobRow: View {
                 }
                 Text(status)
                     .font(.callout)
-                    .foregroundStyle(isFailed ? .red : .secondary)
+                    .foregroundStyle(statusColor)
                     .lineLimit(2)
+                    .help(status)
+                if job.subtitles.contains(where: \.isReady) {
+                    Text(job.subtitles.filter(\.isReady).map(\.title).joined(separator: " · "))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .help("Choose a subtitle track or Off in your video player")
+                }
             }
             Spacer()
             actions
@@ -163,15 +170,18 @@ struct JobRow: View {
         .padding(.vertical, 6)
     }
 
-    private var isFailed: Bool {
-        if case .failed = job.state { return true }
-        return false
+    private var statusColor: Color {
+        switch job.state {
+        case .failed: .red
+        case .saved(_, .some): .orange
+        default: .secondary
+        }
     }
 
     @ViewBuilder
     private var actions: some View {
         switch job.state {
-        case .saved(let file):
+        case .saved(let file, _):
             Button("Play") { NSWorkspace.shared.open(file) }
             Button {
                 NSWorkspace.shared.activateFileViewerSelecting([file])
@@ -179,7 +189,7 @@ struct JobRow: View {
                 Image(systemName: "magnifyingglass")
             }
             .help("Show in Finder")
-        case .failed, .cancelled, .aborted:
+        case .failed, .cancelled:
             Button("Try Again") { store.retry(job) }
             Button {
                 store.remove(job)
@@ -187,6 +197,8 @@ struct JobRow: View {
                 Image(systemName: "xmark")
             }
             .help("Remove")
+        case .stopping:
+            EmptyView()
         case .finding:
             Button("Show Page") { store.sniffer.showPage() }
             Button {
@@ -216,10 +228,17 @@ struct JobRow: View {
             let percent = "\(Int(fraction * 100))%"
             guard let left = job.secondsLeft else { return percent }
             return "\(percent) · \(Self.format(left)) left"
-        case .saved: return "Saved"
+        case .subtitling(let phase):
+            switch phase {
+            case .inspecting: return "Preparing subtitle tracks…"
+            case .transcribing(let fraction): return "Generating original subtitles… \(Int(fraction * 100))%"
+            case .translating(let fraction): return "Translating subtitles to English… \(Int(fraction * 100))%"
+            case .muxing: return "Saving selectable subtitle tracks…"
+            }
+        case .saved(_, let warning): return warning.map { "Saved with subtitle warning. \($0)" } ?? "Saved · Subtitles selectable in player"
         case .failed(let reason): return reason
         case .cancelled: return "Stopped"
-        case .aborted: return "Aborted"
+        case .stopping: return "Stopping…"
         }
     }
 

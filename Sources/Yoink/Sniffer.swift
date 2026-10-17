@@ -15,6 +15,7 @@ struct FoundMedia {
     let title: String
     let headers: [String: String]
     var fetcher: FrameFetcher?
+    var subtitles: [RemoteSubtitle] = []
 }
 
 enum YoinkError: LocalizedError {
@@ -49,6 +50,7 @@ final class Sniffer: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NSW
         let url: URL
         let kind: String
         let page: String
+        let documentID: String
         let frame: WKFrameInfo
     }
 
@@ -57,6 +59,7 @@ final class Sniffer: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NSW
     private var pageWindow: NSWindow?
     var onPageClosed: (() -> Void)?
     private var candidates: [Candidate] = []
+    private var captions: [(track: RemoteSubtitle, documentID: String)] = []
     private var firstFreshCandidate = 0
     private var startSite = ""
 
@@ -77,6 +80,7 @@ final class Sniffer: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NSW
 
     func find(_ pageURL: URL) async throws -> FoundMedia {
         candidates = []
+        captions = []
         firstFreshCandidate = 0
         startSite = Self.site(pageURL.host)
         webView.load(URLRequest(url: pageURL))
@@ -193,6 +197,7 @@ final class Sniffer: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NSW
     func reset() {
         hidePage()
         candidates = []
+        captions = []
         webView.load(URLRequest(url: URL(string: "about:blank")!))
     }
 
@@ -214,7 +219,8 @@ final class Sniffer: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NSW
         case 2: .dash
         default: .file
         }
-        return FoundMedia(url: chosen.url, kind: kind, title: Self.cleanTitle(webView.title ?? ""), headers: headers)
+        return FoundMedia(url: chosen.url, kind: kind, title: Self.cleanTitle(webView.title ?? ""), headers: headers,
+                          subtitles: captions.filter { $0.documentID == chosen.documentID }.map(\.track))
     }
 
     private func best() -> Candidate? {
@@ -236,9 +242,15 @@ final class Sniffer: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NSW
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let body = message.body as? [String: Any],
-              let text = body["url"] as? String, let url = URL(string: text), url.scheme?.hasPrefix("http") == true else { return }
+              let text = body["url"] as? String, let url = URL(string: text), url.scheme?.hasPrefix("http") == true,
+              let documentID = body["documentID"] as? String else { return }
+        if body["kind"] as? String == "subtitle" {
+            let track = RemoteSubtitle(url: url, language: SubtitleLanguage.canonical(body["language"] as? String))
+            if !captions.contains(where: { $0.track.url == url && $0.documentID == documentID }) { captions.append((track, documentID)) }
+            return
+        }
         log.info("candidate \(text, privacy: .public)")
-        candidates.append(Candidate(url: url, kind: body["kind"] as? String ?? "net", page: body["page"] as? String ?? "", frame: message.frameInfo))
+        candidates.append(Candidate(url: url, kind: body["kind"] as? String ?? "net", page: body["page"] as? String ?? "", documentID: documentID, frame: message.frameInfo))
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {

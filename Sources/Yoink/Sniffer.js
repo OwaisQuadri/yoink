@@ -3,12 +3,13 @@
   window.__yoink = true;
   const mediaPattern = /\.(m3u8|mpd|mp4|webm|m4v|mov)(\?|#|$)|\/m3u8\?/i;
   const seen = new Set();
-  const send = (raw, kind) => {
+  const documentID = `${Date.now()}-${Math.random()}`;
+  const send = (raw, kind, language) => {
     let url;
     try { url = new URL(String(raw), location.href).href; } catch { return; }
     if (!/^https?:/.test(url) || seen.has(url)) return;
     seen.add(url);
-    window.webkit.messageHandlers.yoink.postMessage({ url, kind, page: location.href, title: document.title });
+    window.webkit.messageHandlers.yoink.postMessage({ url, kind, documentID, language: language || '', page: location.href, title: document.title });
   };
   const check = (raw) => { if (raw && mediaPattern.test(String(raw))) send(raw, 'net'); };
 
@@ -42,6 +43,9 @@
   let attempts = 0;
   setInterval(() => {
     for (const entry of performance.getEntriesByType('resource')) check(entry.name);
+    document.querySelectorAll('video track[kind="subtitles"], video track[kind="captions"]').forEach((track) => {
+      if (track.src) send(track.src, 'subtitle', track.srclang);
+    });
     document.querySelectorAll('video, video source').forEach((element) => {
       const source = element.currentSrc || element.src;
       if (source && !source.startsWith('blob:')) send(source, 'video');

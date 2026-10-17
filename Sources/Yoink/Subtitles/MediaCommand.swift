@@ -2,8 +2,10 @@ import Foundation
 
 enum MediaCommand {
     static func tool(_ name: String) -> URL {
-        Bundle.main.url(forResource: name, withExtension: nil)
-            ?? URL(fileURLWithPath: "/opt/homebrew/bin/\(name)")
+        if let bundled = Bundle.main.url(forResource: name, withExtension: nil) { return bundled }
+        let vendor = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("vendor/ffmpeg/\(name)")
+        if FileManager.default.isExecutableFile(atPath: vendor.path) { return vendor }
+        return URL(fileURLWithPath: "/opt/homebrew/bin/\(name)")
     }
 
     static func run(_ executable: URL, _ arguments: [String]) async throws -> Data {
