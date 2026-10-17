@@ -71,19 +71,25 @@ if [[ -z $identity ]]; then
   exit 0
 fi
 
+notary_profile="${YOINK_NOTARY_PROFILE:-yoink}"
+notary_archive=build/Yoink-notarization.zip
+ditto -c -k --sequesterRsrc --keepParent $app $notary_archive
+xcrun notarytool submit $notary_archive --keychain-profile "$notary_profile" --wait
+xcrun stapler staple $app
+xcrun stapler validate $app
+
 dmg=build/Yoink.dmg
 stage=build/dmg
 rm -rf $stage $dmg
 mkdir -p $stage
 cp -R $app $stage/
+xcrun stapler validate $stage/Yoink.app
 ln -s /Applications $stage/Applications
 hdiutil create -quiet -volname Yoink -srcfolder $stage -format UDZO $dmg
 codesign --force --timestamp --sign "$identity" $dmg
 rm -rf $stage
 
-xcrun notarytool submit $dmg --keychain-profile "${YOINK_NOTARY_PROFILE:-yoink}" --wait
-xcrun stapler staple $app
-xcrun stapler validate $app
+xcrun notarytool submit $dmg --keychain-profile "$notary_profile" --wait
 xcrun stapler staple $dmg
 xcrun stapler validate $dmg
 echo "Built and notarized $app and $dmg"

@@ -10,6 +10,8 @@ final class AppUpdater: NSObject, ObservableObject, SPUStandardUserDriverDelegat
         super.init()
         controller = SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: nil, userDriverDelegate: self)
         controller.updater.publisher(for: \.canCheckForUpdates)
+            .combineLatest(controller.updater.publisher(for: \.sessionInProgress))
+            .map { isCheckAllowed, isSessionInProgress in isCheckAllowed && !isSessionInProgress }
             .assign(to: &$isCheckForUpdatesEnabled)
         controller.startUpdater()
     }
