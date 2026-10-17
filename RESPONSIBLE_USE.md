@@ -18,4 +18,4 @@ You are responsible for checking whether your use is authorized. The project doe
 
 The MIT license covers Yoink's own code, not third-party software, content rights, or permission to use another party's trademarks. It contains no express patent license. Codec and other patent questions can require a separate assessment for your activity and jurisdiction. No affiliation or endorsement by content owners or websites is implied.
 
-Redistributors must also meet the bundled components' license obligations. See [third-party notices](THIRD_PARTY_NOTICES.md) and the [license audit](docs/license-audit.md) before distributing an app build. The current FFmpeg source-provenance gap is a distribution blocker, not something the MIT license resolves.
+Redistributors must also meet the bundled components' license obligations. See [third-party notices](THIRD_PARTY_NOTICES.md) and the [license audit](docs/license-audit.md) before distributing an app build. The withdrawn 0.0.2/build 3 binaries have unresolved source-provenance gaps. The next-version source build does not retroactively repair those binaries.

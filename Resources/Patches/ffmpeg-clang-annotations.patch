@@ -1,0 +1,54 @@
+--- a/libavformat/jvdec.c
++++ b/libavformat/jvdec.c
+@@ -1,0 +2,2 @@
++ * Modified by the Yoink project on 2026-10-17: compiler annotations only.
++ *
+@@ -184,0 +187 @@
++            av_fallthrough;
+@@ -208,0 +212 @@
++            av_fallthrough;
+--- a/libavformat/nspdec.c
++++ b/libavformat/nspdec.c
+@@ -1,0 +2,2 @@
++ * Modified by the Yoink project on 2026-10-17: compiler annotations only.
++ *
+@@ -80,0 +83 @@
++            av_fallthrough;
+--- a/libavformat/nuv.c
++++ b/libavformat/nuv.c
+@@ -1,0 +2,2 @@
++ * Modified by the Yoink project on 2026-10-17: compiler annotations only.
++ *
+@@ -278,0 +281 @@
++            av_fallthrough;
+--- a/libavformat/tls_securetransport.c
++++ b/libavformat/tls_securetransport.c
+@@ -1,0 +2,2 @@
++ * Modified by the Yoink project on 2026-10-17: compiler annotations only.
++ *
+@@ -357,0 +360 @@
++        av_fallthrough;
+--- a/libavcodec/lcevc_parser.c
++++ b/libavcodec/lcevc_parser.c
+@@ -1,0 +2,2 @@
++ * Modified by the Yoink project on 2026-10-17: compiler annotations only.
++ *
+@@ -191,0 +194 @@
++            av_fallthrough;
+--- a/libavcodec/adpcm.c
++++ b/libavcodec/adpcm.c
+@@ -1,0 +2,2 @@
++ * Modified by the Yoink project on 2026-10-17: compiler annotations only.
++ *
+@@ -424 +426 @@
+-static inline int16_t adpcm_ima_escape_expand_nibble(ADPCMChannelStatus *c, int8_t nibble)
++static av_unused inline int16_t adpcm_ima_escape_expand_nibble(ADPCMChannelStatus *c, int8_t nibble)
+@@ -583 +585 @@
+-static void decode_adpcm_ima_hvqm2(AVCodecContext *avctx, int16_t *outbuf, int samples_to_do,
++static av_unused void decode_adpcm_ima_hvqm2(AVCodecContext *avctx, int16_t *outbuf, int samples_to_do,
+@@ -620 +622 @@
+-static void decode_adpcm_ima_hvqm4(AVCodecContext *avctx, int16_t *outbuf, int samples_to_do,
++static av_unused void decode_adpcm_ima_hvqm4(AVCodecContext *avctx, int16_t *outbuf, int samples_to_do,
+@@ -767 +769 @@
+-static inline int16_t adpcm_circus_expand_nibble(ADPCMChannelStatus *c, uint8_t nibble)
++static av_unused inline int16_t adpcm_circus_expand_nibble(ADPCMChannelStatus *c, uint8_t nibble)

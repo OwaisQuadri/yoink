@@ -4,13 +4,25 @@
 
 Audit date: 2026-10-17. Baseline source: `995bee9d517fdc62fdd116fe94dc1bb1fbd61d33`. Previously published release: [v0.0.2](https://github.com/OwaisQuadri/yoink/releases/tag/v0.0.2), displayed version 0.0.2, build 3.
 
-**Distribution remains blocked.** The bundled FFmpeg and ffprobe report GPL-3.0-or-later, but their exact corresponding source and static dependency notices are not established. Adding MIT for Yoink's own code and copying license texts does not resolve that gap.
+**The withdrawn 0.0.2/build 3 binaries remain unsuitable for redistribution.** Their FFmpeg and ffprobe report GPL-3.0-or-later, but exact corresponding source and static dependency notices are not established. MIT for Yoink's own code does not resolve that historical gap. The next-version recipe replaces those tools with a source-built LGPL configuration. Local source-package and media checks pass. Independent review, final Developer ID signing, notarization, disk-image inspection, and release approval remain pending.
 
-This audit covers the repository, pinned download archives, the retained release app, and the app inside the release disk image. The disk image was mounted read-only. Its SHA-256 matches the published GitHub asset digest. This implementation did not change the installed app, release asset bytes, source version, or build number. The owner separately directed withdrawal of unverified public binaries. The retained v0.0.2 release is now draft, verified through GitHub release metadata. This report is an engineering inventory, not legal advice, a legal certification, or a patent clearance opinion.
+This audit covers the repository, pinned download archives, the retained release app, and the app inside the release disk image. The disk image was mounted read-only. Its SHA-256 matches the published GitHub asset digest. This implementation did not change the installed app or existing release asset bytes. The next version is 0.0.3/build 4. The owner separately directed withdrawal of unverified public binaries. The retained v0.0.2 release is now draft, verified through GitHub release metadata. This report is an engineering inventory, not legal advice, a legal certification, or a patent clearance opinion.
 
 The source repository previously contained no project license. This change adds the owner-approved MIT license and separate [responsible-use guidance](../RESPONSIBLE_USE.md). It adds verified dependency texts and bundles the documents in future local builds. It does not retroactively insert notices into the published app.
 
-## Artifact identity
+## Next-version repair
+
+`scripts/build-ffmpeg.sh` replaces downloaded provider executables with a universal source build of FFmpeg 9.0.2. The original official archive has SHA-256 `8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e`. It supplies all compiled FFmpeg code. Yoink's included patch adds six intentional-fallthrough annotations and marks four conditionally unused ADPCM helpers. Each modified file carries a dated notice. These annotations satisfy Clang's warning-as-error build without changing codec behavior. Patch SHA-256 is `13bdf8b2fa90b9096a51f40213952ee696c8533541687ed1d351d911073c2b49`. Native codecs, formats, and protocols remain enabled rather than guessing a restrictive whitelist from the app's common cases.
+
+The recipe disables external autodetection, GPL, nonfree, and version-3-only components. Explicit dependencies are macOS system libxml2, compression libraries, iconv, SecureTransport, AudioToolbox, and VideoToolbox. It does not statically include provider codec libraries. The app's actual operations stream-copy video and audio, decode audio to PCM, extract captions, and encode `mov_text`. `libx264` was used only to create test fixtures. Those fixtures now use system `h264_videotoolbox`.
+
+[The source instructions](ffmpeg-source.md) describe the exact recipe and its compiler flags. Each build preserves the original archive, patch, recipe, deployment target, and build environment in `Yoink-FFmpeg-9.0.2-source.tar.gz`. The app includes that package under `Contents/Resources/Legal/FFmpeg/`. The appcast script also copies it to the release output with `SHA256SUMS`. The final download must include source access, not just the DMG.
+
+The source archive contains FFmpeg's complete notices and license texts, including its permissively licensed embedded code. `Resources/Licenses/FFMPEG-LICENSE.md` and `FFMPEG-COPYING.LGPLv2.1` preserve the release's top-level terms. This software is based in part on the work of the Independent JPEG Group. Yoink makes no changes to FFmpeg's IJG-derived source files.
+
+Whisper's optional llamafile and KleidiAI backends are now explicitly disabled rather than relying on cache defaults. The build compares Sparkle's and whisper.cpp's top-level license texts against the verified copies before app packaging.
+
+## Baseline artifact identity
 
 The inspected `Yoink-0.0.2-3.dmg` has SHA-256:
 
@@ -32,7 +44,7 @@ GitHub's release metadata identifies the same baseline commit. Both the retained
 
 ### FFmpeg and ffprobe
 
-`scripts/build-app.sh` pins these archives from `https://ffmpeg.martin-riedl.de/download/macos/{architecture}/{revision}/{tool}.zip`. Archive contents were inspected. Each ZIP contains only its named executable, without source or license files. Cached archive SHA-256 values match the script.
+The baseline `scripts/build-app.sh` pins these archives from `https://ffmpeg.martin-riedl.de/download/macos/{architecture}/{revision}/{tool}.zip`. Archive contents were inspected. Each ZIP contains only its named executable, without source or license files. Cached archive SHA-256 values match the script.
 
 | Architecture | Provider revision | Tool | Archive SHA-256 |
 | --- | --- | --- | --- |
@@ -72,9 +84,9 @@ The two pinned download directories returned HTTP 403 to directory-index request
 
 Unresolved inputs include the exact FFmpeg source, any modifications, every statically included dependency's revision and license notices, transitive dependencies, and the scripts and settings needed to build them. Codec version labels and upstream homepages cannot fill those gaps. In particular, OpenSSL, x264, x265, VVenC, and the other enabled libraries require version-specific review, not an assumed license list.
 
-Before distribution, obtain and preserve the actual corresponding source and build materials for both architectures, including static dependencies and modifications. Verify their mapping to all four downloaded archives. Review all notices and license compatibility from those exact materials. Then provide recipients the source through a valid GPLv3 section 6 distribution method, with clear directions alongside the binaries. For download distribution, accompanying equivalent source access is an option to assess. This report makes no written offer and does not substitute a generic upstream URL for corresponding source.
+Redistributing the old provider binaries would require the actual corresponding source and build materials for both architectures, including static dependencies and modifications. Verify their mapping to all four downloaded archives. Review all notices and license compatibility from those exact materials. Then provide recipients the source through a valid GPLv3 section 6 distribution method, with clear directions alongside the binaries. For download distribution, accompanying equivalent source access is an option to assess. This report makes no written offer and does not substitute a generic upstream URL for corresponding source.
 
-If the provider cannot supply those materials, the alternative is a separately approved, reproducible FFmpeg build from pinned, retained source and dependency inputs. A smaller dependency set may reduce the review work. This audit does not change codecs, versions, or build provenance to claim a repair that did not occur.
+The owner authorized a next-version source build instead of republishing these unverified binaries. The recipe above removes their unverifiable static dependencies. It does not establish missing provenance for the withdrawn release.
 
 ### Sparkle
 
@@ -106,6 +118,8 @@ These hashes identify the preserved license texts. The FFmpeg GPL copy is from [
 
 | File under `Resources/` | SHA-256 |
 | --- | --- |
+| `Licenses/FFMPEG-COPYING.LGPLv2.1` | `246041b6ecf9bc32d718a62c57877c78b5eb397b6467e74ed7ae2626ab189c30` |
+| `Licenses/FFMPEG-LICENSE.md` | `2e1d16c72fd74e12063776371da757322f8b77589386532f4fd8634bde7de1af` |
 | `Licenses/FFMPEG-COPYING.GPLv3` | `8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903` |
 | `Licenses/SPARKLE-LICENSE` | `389a4e4e9a32f059775b13a06e25a591445ba229d2838d26dd3e7c0c45127cfe` |
 | `Licenses/WHISPER-LICENSE` | `e562a2ddfaf8280537795ac5ecd34e3012b6582a147ef69ba6a6a5c08c84757d` |
@@ -116,15 +130,15 @@ These hashes identify the preserved license texts. The FFmpeg GPL copy is from [
 
 ## Distribution hold and remediation
 
-`scripts/build-app.sh` rejects every invocation except `--local` before dependency downloads, compilation, signing, or notarization. There is no bypass flag. Local builds are for development, not distribution. Removing the stop requires a reviewed source-compliance repair, not merely adding license files.
+The initial audit correction blocked all non-local builds. The next-version source repair passed its local binary, source-package, and media checks, replacing that stop with a mandatory checksummed source build for every build mode. A corrupt source archive stops before extraction or compilation. There is no prebuilt-binary fallback. Independent review and the existing release checks remain mandatory. Local validation does not authorize publication.
 
 Before any new release:
 
-1. Resolve the FFmpeg source and dependency blocker above.
+1. Use the new source-built FFmpeg tools, not the withdrawn provider binaries.
 2. Check the full source and notices against the final binaries for both architectures.
-3. Verify the source-access method and license compatibility, with qualified legal review where needed.
+3. Verify the LGPL source-access method and license compatibility, with qualified legal review where needed.
 4. Inspect the final app and disk image for all notices and source directions.
-5. Increase both version values and complete the existing signing and update checks.
+5. Confirm version 0.0.3/build 4 and complete the existing signing and update checks.
 
 The existing 0.0.2/build 3 distribution has the recorded gaps. The owner withdrew it to draft without deleting assets or its tag. Do not republish it or silently relabel or replace its assets. The authorized next-version repair must use a new version and verified source provenance.
 
@@ -145,11 +159,24 @@ fd -HI 'LICENSE|COPYING|NOTICE' "$app"
 otool -L "$app/Contents/Resources/ffmpeg"
 otool -L "$app/Contents/Resources/whisper-cli"
 shasum -a 256 Resources/Licenses/* Resources/WHISPER-MODEL-LICENSE
-zsh -n scripts/build-app.sh Tests/Dependencies/build-app-license-gate.zsh
-zsh Tests/Dependencies/build-app-license-gate.zsh
+zsh -n scripts/*.sh Tests/Dependencies/*.zsh
+zsh Tests/Dependencies/build-app-source-required.zsh
+zsh Tests/Dependencies/build-ffmpeg-source-integrity.zsh
+zsh Tests/Dependencies/appcast-source-assets.zsh
+zsh Tests/Dependencies/ffmpeg-source-package.zsh
 ```
 
-The gate regression check uses a temporary script copy and a mocked downloader. It verifies that distribution invocations stop before downloads and `--local` reaches dependency preparation. It does not notarize or publish anything.
+The source-required regression uses temporary script copies and a mocked source builder. It checks that both build modes require the source pipeline before packaging or signing. The integrity regression rejects a corrupt cached archive before extraction. The appcast regression uses mocked signing and checks repeated generation without scanning the companion source as an app update. The source-package regression inspects the actual local app, matching every notice, source archive, patch, and recipe. It checks both architectures of both tools for LGPL 2.1-or-later and the expected flags.
+
+## Local validation results
+
+The universal source build and `scripts/build-app.sh --local` pass. The resulting app identifies version 0.0.3/build 4 and passes `codesign --verify --deep --strict` with ad-hoc signatures. Both tools on both architectures report LGPL version 2.1 or later. Their dynamic dependencies are macOS system libraries and frameworks.
+
+`zsh scripts/check-subtitles.sh` passes 25 Swift tests and the additional HLS and DASH downloader cases. Synthetic speech fixtures exercise local inference, source captions, discontinuities, and stream-copy output. Separate checks run both architecture slices through HTTPS direct media, HTTP HLS and DASH, PCM audio extraction, `mov_text` muxing, and probing. All six cases pass.
+
+The HTTPS fixture uses an isolated self-signed loopback certificate with verification disabled only in the test command. No product TLS setting or user trust store changes. An all-HTTPS HLS test with that certificate fails at nested requests because upstream FFmpeg does not propagate the test override. Valid-certificate HTTPS HLS and DASH remain untested here. Production publication must check real authorized HTTPS media without weakening certificate verification.
+
+No Developer ID build, notarization, final disk image, real appcast signature, or publication was performed for 0.0.3. The appcast regression proves asset handling, not cryptographic signing. QuickTime playback and a macOS 14 runtime check are not part of this local validation.
 
 ## Other rights and limits
 

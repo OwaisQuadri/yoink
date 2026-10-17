@@ -6,31 +6,7 @@ app=build/Yoink.app
 vendor=vendor/ffmpeg
 is_local=0
 if [[ ${1:-} == --local ]]; then is_local=1; fi
-if (( ! is_local )); then
-  print -u2 'Distribution build blocked: matching FFmpeg/ffprobe and static dependency corresponding source is unverified. See docs/license-audit.md. Use --local only for a non-distribution build.'
-  exit 1
-fi
-
-while read -r arch revision tool sha; do
-  directory=$vendor/$revision
-  mkdir -p $directory
-  archive=$directory/$tool-$arch.zip
-  if [[ ! -f $archive ]]; then
-    curl -fsSL -o $archive.part "https://ffmpeg.martin-riedl.de/download/macos/$arch/$revision/$tool.zip"
-    echo "$sha  $archive.part" | shasum -a 256 -c -
-    mv $archive.part $archive
-  fi
-  echo "$sha  $archive" | shasum -a 256 -c -
-  unzip -oq $archive -d $directory
-done <<'ASSETS'
-arm64 1789931890_9.0.2 ffmpeg c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924
-arm64 1789931890_9.0.2 ffprobe fcbe839537485eaee7a7a8bc5cbc0f90d53617e80943e8a5b2e31cb851197ea6
-amd64 1789931006_9.0.2 ffmpeg 7c6b4125b191cbf773832dc51f424cf2b6bb7da43007d1e066f95909e47cacd4
-amd64 1789931006_9.0.2 ffprobe 2322438ed2f6319a691291b247d09c69dcaa3a982460d1f269a7e1af335cfdfd
-ASSETS
-for tool in ffmpeg ffprobe; do
-  lipo -create $vendor/1789931890_9.0.2/$tool $vendor/1789931006_9.0.2/$tool -output $vendor/$tool
-done
+zsh scripts/build-ffmpeg.sh
 zsh scripts/build-subtitles.sh
 
 minimum_system=$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' Resources/Info.plist)
@@ -42,6 +18,8 @@ for arch in arm64 x86_64; do
   cp $bin/Yoink build/bin/Yoink-$arch
 done
 sparkle=.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework
+cmp Resources/Licenses/SPARKLE-LICENSE .build/artifacts/sparkle/Sparkle/LICENSE
+cmp Resources/Licenses/WHISPER-LICENSE vendor/whisper/WHISPER-LICENSE
 
 rm -rf $app
 mkdir -p $app/Contents/MacOS $app/Contents/Resources $app/Contents/Frameworks
@@ -54,7 +32,9 @@ mkdir -p $app/Contents/Resources/Legal/Resources $app/Contents/Resources/Legal/d
 cp LICENSE RESPONSIBLE_USE.md THIRD_PARTY_NOTICES.md $app/Contents/Resources/Legal/
 cp -R Resources/Licenses $app/Contents/Resources/Legal/Resources/
 cp Resources/WHISPER-MODEL-LICENSE $app/Contents/Resources/Legal/Resources/
-cp docs/license-audit.md $app/Contents/Resources/Legal/docs/
+cp docs/license-audit.md docs/ffmpeg-source.md $app/Contents/Resources/Legal/docs/
+mkdir -p $app/Contents/Resources/Legal/FFmpeg
+cp build/Yoink-FFmpeg-9.0.2-source.tar.gz $app/Contents/Resources/Legal/FFmpeg/
 cp Resources/Info.plist $app/Contents/Info.plist
 identity=""
 if (( ! is_local )); then

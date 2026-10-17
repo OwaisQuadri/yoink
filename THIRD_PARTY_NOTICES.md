@@ -1,18 +1,18 @@
 # Third-party notices
 
-Yoink's [MIT license](LICENSE) covers its own code. It does not replace these licenses or grant rights to downloaded content. This inventory covers the pinned build described in the [license audit](docs/license-audit.md). The FFmpeg dependency inventory and corresponding source remain incomplete. These notices alone do not make an app distributable.
+Yoink's [MIT license](LICENSE) covers its own code. It does not replace these licenses or grant rights to downloaded content. This inventory covers the next-version build described in the [license audit](docs/license-audit.md). Release review must verify the final binaries, notices, and source access.
 
-Local builds include these documents under `Yoink.app/Contents/Resources/Legal/`. No notices in the published 0.0.2/build 3 app or disk image change through this repository update.
+Builds include these documents under `Yoink.app/Contents/Resources/Legal/`. No notices in the withdrawn 0.0.2/build 3 app or disk image change through this repository update.
 
 ## FFmpeg and ffprobe
 
-Both bundled tools identify themselves as FFmpeg 9.0.2 from Martin Riedl's static builds. Both architectures report GNU GPL version 3 or later. See the [GPL text](Resources/Licenses/FFMPEG-COPYING.GPLv3) and [FFmpeg legal information](https://ffmpeg.org/legal.html).
+The next-version tools build from the official FFmpeg 9.0.2 source with [Yoink's documented compiler-annotation patch](docs/ffmpeg-source.md) with GPL, nonfree, and version-3-only components disabled. FFmpeg's code and Yoink's patch use GNU LGPL version 2.1 or later, not the project's MIT license. See the [LGPL text](Resources/Licenses/FFMPEG-COPYING.LGPLv2.1), [upstream license summary](Resources/Licenses/FFMPEG-LICENSE.md), and [FFmpeg legal information](https://ffmpeg.org/legal.html).
 
-FFmpeg reports copyright 2000-2026 the FFmpeg developers. ffprobe reports copyright 2007-2026 the FFmpeg developers.
+FFmpeg identifies copyright 2000-2026 the FFmpeg developers. ffprobe identifies copyright 2007-2026 the FFmpeg developers. This software is based in part on the work of the Independent JPEG Group. Yoink does not modify FFmpeg's IJG-derived files.
 
-The bundle includes many static codec and support libraries. Their exact source revisions and full notices are not verified. A generic FFmpeg source link is not a substitute for matching corresponding source, dependency notices, or build scripts. Distribution builds stop until the [source blocker](docs/license-audit.md#ffmpeg-source-and-dependency-blocker) is resolved. This document is not a written source offer.
+The exact source archive, patch, all embedded source notices, and build recipe accompany the app in `Contents/Resources/Legal/FFmpeg/Yoink-FFmpeg-9.0.2-source.tar.gz`. The release download must also include the source package. See the [rebuild instructions](docs/ffmpeg-source.md). The build uses macOS system libraries, not statically included third-party codec libraries. Recipients may modify and rebuild the tools under their upstream license. No restriction on reverse engineering for debugging those modifications is added.
 
-Yoink invokes these tools as separate processes. MIT on Yoink's own code does not remove GPL obligations for the tools or decide the legal classification of the combined distribution.
+Yoink invokes these tools as separate processes. MIT does not remove their LGPL obligations or decide the combined distribution's legal classification. The old provider binaries in withdrawn 0.0.2/build 3 instead report GPL version 3 or later. Their [GPL text](Resources/Licenses/FFMPEG-COPYING.GPLv3) is retained for the historical audit, not as the license of the new build. Their unresolved [source blocker](docs/license-audit.md#ffmpeg-source-and-dependency-blocker) still prevents redistributing those old binaries. This document makes no written source offer.
 
 ## Sparkle 2.10.0
 
