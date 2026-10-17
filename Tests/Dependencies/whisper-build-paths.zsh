@@ -10,6 +10,6 @@ for architecture in arm64 x86_64; do
     print -u2 "The $architecture Whisper binary exposes a local build path."
     exit 1
   fi
-  grep -Fq './vendor/whisper/source-' "$work/strings-$architecture.txt"
+  grep -Fq 'vendor/whisper/source-' "$work/strings-$architecture.txt"
 done
 print "PASS: both Whisper architectures retain source diagnostics without local user paths. Evidence at $work"
