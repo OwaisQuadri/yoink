@@ -59,7 +59,7 @@ Whisper and its model use the MIT license. The bundle includes `WHISPER-LICENSE`
 
 ## Prepare an update locally
 
-1. Set `CFBundleShortVersionString` in `Resources/Info.plist` to the release version. Increase `CFBundleVersion` for every release. Sparkle compares the build number, not the displayed version.
+1. For every release, increase both `CFBundleShortVersionString` (the displayed version) and `CFBundleVersion` (the build number) in `Resources/Info.plist`. Both must be greater than in the preceding release. Never reuse a release version or build number, or relabel an existing artifact. Sparkle compares the build number, not the displayed version.
 2. Build the final app with `./scripts/build-app.sh` and wait for notarization and ticket validation to succeed.
 3. Run `./scripts/generate-appcast.sh` on the signing Mac. It writes a versioned disk image and signed `appcast.xml` under `build/updates/`. It publishes nothing.
 4. Before distribution, validate the original disk image with `xcrun stapler validate build/Yoink.dmg`. Generate the appcast again after any change to the disk image, including stapling.
@@ -72,7 +72,7 @@ The generated feed and archive both carry EdDSA signatures. `SURequireSignedFeed
 
 Publication is separate from the local scripts and requires release approval.
 
-1. Complete the update checks below on the final artifact.
+1. Complete the update checks below on the final artifact. Verify that both version values increased against the preceding release's verified signed appcast, or the pre-release source history for the first published release. This is a required manual publication check; the local generator does not query published releases.
 2. Create a GitHub release with the tag `v` followed by `CFBundleShortVersionString`.
 3. Attach both generated files from the versioned `build/updates/` directory. Keep their filenames unchanged. The appcast points to this specific tag's archive, not the mutable latest archive.
 4. Publish the release as the latest stable release. `SUFeedURL` in `Resources/Info.plist` resolves its `appcast.xml` asset.
