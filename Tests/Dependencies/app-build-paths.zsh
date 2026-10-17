@@ -10,9 +10,14 @@ for tool in Yoink ffmpeg ffprobe whisper-cli; do
   for architecture in arm64 x86_64; do
     thin=$work/$tool-$architecture
     lipo "$binary" -thin $architecture -output "$thin"
-    if LC_ALL=C grep -aEq '/Users/|/private/var/folders/|/tmp/yoink' "$thin"; then
+    scan_status=0
+    LC_ALL=C grep -aEq '/Users/|/private/var/folders/|/tmp/yoink' "$thin" || scan_status=$?
+    if (( scan_status == 0 )); then
       print -u2 "The $architecture $tool binary exposes a local build path, including its symbol table."
       exit 1
+    elif (( scan_status != 1 )); then
+      print -u2 "The $architecture $tool privacy scan failed with status $scan_status."
+      exit "$scan_status"
     fi
   done
 done
