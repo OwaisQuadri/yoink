@@ -5,6 +5,11 @@ cd "${0:A:h}/../.."
 app=build/Yoink.app
 package=$app/Contents/Resources/Legal/FFmpeg/Yoink-FFmpeg-9.0.2-source.tar.gz
 work=$(mktemp -d "${TMPDIR:-/tmp}/yoink-ffmpeg-source.XXXXXX")
+tar -tvzf $package > "$work/archive-metadata.txt"
+if grep -qvE '^[^ ]+ +[0-9]+ +0 +0 +' "$work/archive-metadata.txt"; then
+  print -u2 'The source package exposes local archive ownership.'
+  exit 1
+fi
 tar -xzf $package -C "$work"
 echo "8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e  $work/ffmpeg-9.0.2.tar.xz" | shasum -a 256 -c -
 cmp scripts/build-ffmpeg.sh "$work/scripts/build-ffmpeg.sh"
