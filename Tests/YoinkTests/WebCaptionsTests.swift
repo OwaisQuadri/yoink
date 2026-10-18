@@ -65,6 +65,29 @@ final class WebCaptionsTests: XCTestCase {
         XCTAssertEqual(variant.subtitles.map(\.isForced), [false, true])
     }
 
+    func testHLSAudioLanguageNeverComesFromUnselectedOrAmbiguousInBandRenditions() throws {
+        let base = URL(string: "https://example.com/master.m3u8")!
+        let renditions = """
+            #EXTM3U
+            #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="Spanish",LANGUAGE="es",DEFAULT=YES
+            #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="French",LANGUAGE="fr"
+            """
+        let ambiguous = try XCTUnwrap(HLS.pickVariant(renditions + "\n#EXT-X-STREAM-INF:BANDWIDTH=100,AUDIO=\"audio\"\nvideo.m3u8", base: base))
+        XCTAssertNil(ambiguous.audio)
+        XCTAssertNil(ambiguous.selectedAudioLanguage)
+        let unselected = try XCTUnwrap(HLS.pickVariant(renditions + "\n#EXT-X-STREAM-INF:BANDWIDTH=100\nvideo.m3u8", base: base))
+        XCTAssertNil(unselected.audio)
+        XCTAssertNil(unselected.selectedAudioLanguage)
+        let external = try XCTUnwrap(HLS.pickVariant(renditions + """
+
+            #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="English",LANGUAGE="eng-US",URI="english.m3u8"
+            #EXT-X-STREAM-INF:BANDWIDTH=100,AUDIO="audio"
+            video.m3u8
+            """, base: base))
+        XCTAssertEqual(external.audio, base.deletingLastPathComponent().appendingPathComponent("english.m3u8"))
+        XCTAssertEqual(external.selectedAudioLanguage, "en")
+    }
+
     func testWebVTTTimestampMapKeepsNonzeroTransportClockSynchronized() throws {
         let cues = try WebCaptions.cues("""
             WEBVTT

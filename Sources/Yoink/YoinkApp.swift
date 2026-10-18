@@ -78,6 +78,8 @@ struct YoinkApp: App {
 struct ContentView: View {
     @Environment(Store.self) private var store
     @State private var link = ""
+    @State private var subtitleChoice = SubtitleChoice.default
+    @State private var isShowingSubtitleOptions = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -87,6 +89,17 @@ struct ContentView: View {
                         .textFieldStyle(.roundedBorder)
                         .controlSize(.large)
                         .onSubmit(submit)
+                    Button {
+                        isShowingSubtitleOptions.toggle()
+                    } label: {
+                        Image(systemName: "slider.horizontal.3")
+                    }
+                    .controlSize(.large)
+                    .accessibilityLabel("Subtitle options")
+                    .help("Subtitle options")
+                    .popover(isPresented: $isShowingSubtitleOptions) {
+                        subtitleOptions
+                    }
                     Button("Download", action: submit)
                         .controlSize(.large)
                         .buttonStyle(.borderedProminent)
@@ -124,8 +137,21 @@ struct ContentView: View {
         .onAppear(perform: pasteFromClipboard)
     }
 
+    private var subtitleOptions: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Toggle("Original subtitles", isOn: $subtitleChoice.languages[isSelected: .original])
+                .toggleStyle(.checkbox)
+            Toggle("English subtitles", isOn: $subtitleChoice.languages[isSelected: .english])
+                .toggleStyle(.checkbox)
+            Toggle("Generate missing subtitles", isOn: $subtitleChoice.isGenerationEnabled)
+                .toggleStyle(.switch)
+                .disabled(subtitleChoice.languages.isEmpty)
+        }
+        .padding(16)
+    }
+
     private func submit() {
-        store.add(link)
+        store.add(link, subtitleChoice: subtitleChoice)
         link = ""
     }
 
@@ -233,11 +259,13 @@ struct JobRow: View {
         case .subtitling(let phase):
             switch phase {
             case .inspecting: return "Preparing subtitle tracks…"
-            case .transcribing(let fraction): return "Generating original subtitles… \(Int(fraction * 100))%"
+            case .transcribing(let fraction): return "Generating subtitles… \(Int(fraction * 100))%"
             case .translating(let fraction): return "Translating subtitles to English… \(Int(fraction * 100))%"
-            case .muxing: return "Saving selectable subtitle tracks…"
+            case .muxing: return job.subtitles.contains(where: \.isReady) ? "Saving selectable subtitle tracks…" : "Saving video…"
             }
-        case .saved(_, let warning): return warning.map { "Saved with subtitle warning. \($0)" } ?? "Saved · Subtitles selectable in player"
+        case .saved(_, let warning):
+            if let warning { return "Saved with subtitle warning. \(warning)" }
+            return job.subtitles.contains(where: \.isReady) ? "Saved · Subtitles selectable in player" : "Saved"
         case .failed(let reason): return reason
         case .cancelled: return "Stopped"
         case .stopping: return "Stopping…"

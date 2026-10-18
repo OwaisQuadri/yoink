@@ -87,6 +87,7 @@ enum Downloader {
     static func save(
         _ media: FoundMedia,
         to output: URL,
+        subtitleChoice: SubtitleChoice = .default,
         work: URL = FileManager.default.temporaryDirectory.appendingPathComponent("yoink-\(UUID().uuidString)"),
         onAcquired: @escaping @MainActor () -> Void,
         onSubtitles: @escaping @MainActor (SubtitlePhase, [SubtitleTrack]) -> Void,
@@ -97,15 +98,16 @@ enum Downloader {
 
         let staged: URL
         let sourceTracks: [SubtitleTrack]
+        let selectedAudioLanguage: String?
         do {
             try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
-            (staged, sourceTracks) = try await acquire(media, work: work, tracker: tracker)
+            (staged, sourceTracks, selectedAudioLanguage) = try await acquire(media, work: work, tracker: tracker, subtitleChoice: subtitleChoice)
             await onAcquired()
         } catch {
             await onAcquired()
             throw error
         }
-        let outcome = try await SubtitlePipeline.complete(video: staged, work: work, sourceTracks: sourceTracks, onUpdate: onSubtitles)
+        let outcome = try await SubtitlePipeline.complete(video: staged, work: work, sourceTracks: sourceTracks, selectedAudioLanguage: selectedAudioLanguage, subtitleChoice: subtitleChoice, onUpdate: onSubtitles)
         var warning = outcome.warning
         let partial = output.appendingPathExtension("part")
         defer { try? FileManager.default.removeItem(at: partial) }
@@ -118,7 +120,7 @@ enum Downloader {
             try await SubtitlePipeline.mux(video: staged, tracks: [], to: partial)
             var tracks = outcome.tracks
             for index in tracks.indices where tracks[index].isReady { tracks[index].state = .failed("Couldn’t embed the subtitle track") }
-            warning = SubtitleOutcome(tracks: tracks).warning
+            warning = SubtitleOutcome(tracks: tracks, notices: outcome.notices).warning
             await onSubtitles(.muxing, tracks)
         }
         try Task.checkCancellation()
@@ -126,19 +128,22 @@ enum Downloader {
         return warning
     }
 
-    private static func acquire(_ media: FoundMedia, work: URL, tracker: ProgressTracker) async throws -> (URL, [SubtitleTrack]) {
+    private static func acquire(_ media: FoundMedia, work: URL, tracker: ProgressTracker, subtitleChoice: SubtitleChoice = .default) async throws -> (URL, [SubtitleTrack], String?) {
         let inputs: [String]
+        var selectedAudioLanguage: String?
         var subtitles = media.subtitles
         var timeline = TransportTimeline.available([])
         switch media.kind {
         case .hls:
-            let (tracks, renditions) = try await hlsTracks(media)
+            let tracks: [HLSTrack]
+            let renditions: [RemoteSubtitle]
+            (tracks, renditions, selectedAudioLanguage) = try await hlsTracks(media)
             subtitles += renditions
             await MainActor.run { tracker.total = tracks.reduce(0) { $0 + $1.segments.count } }
             var files: [String] = []
             for (index, track) in tracks.enumerated() {
                 let file = work.appendingPathComponent("track\(index)")
-                let downloadedTimeline = try await download(track, media: media, to: file, tracker: tracker, isVideo: index == 0)
+                let downloadedTimeline = try await download(track, media: media, to: file, tracker: tracker, isVideo: index == 0 && !subtitleChoice.languages.isEmpty)
                 if index == 0 { timeline = downloadedTimeline }
                 files.append(file.path)
             }
@@ -153,17 +158,20 @@ enum Downloader {
             inputs = [media.url.absoluteString]
         }
         var sourceTracks: [SubtitleTrack] = []
-        for input in inputs {
-            do {
-                sourceTracks += try await SubtitlePipeline.extractSources(input: input, headers: media.kind == .dash ? media.headers : [:], work: work)
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch {
-                sourceTracks.append(SubtitleTrack(language: "und", source: .embedded, state: .failed("Couldn’t inspect source captions")))
+        if !subtitleChoice.languages.isEmpty {
+            for input in inputs {
+                do {
+                    sourceTracks += try await SubtitlePipeline.extractSources(input: input, headers: media.kind == .dash ? media.headers : [:], work: work)
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    sourceTracks.append(SubtitleTrack(language: "und", source: .embedded, state: .failed("Couldn’t inspect source captions")))
+                }
             }
         }
         let staged = work.appendingPathComponent("video.mkv")
         try await remux(inputs, audioInput: inputs.count > 1 ? 1 : 0, headers: media.kind == .dash ? media.headers : [:], to: staged)
+        guard !subtitleChoice.languages.isEmpty else { return (staged, [], selectedAudioLanguage) }
         let stagedInventory = try await MediaInventory.read(staged)
         let videoStart = stagedInventory.streams.first { $0.codec_type == "video" }?.start_time.flatMap(Double.init) ?? 0
         let formatStart = stagedInventory.format.start_time.flatMap(Double.init) ?? 0
@@ -184,21 +192,21 @@ enum Downloader {
                 sourceTracks.append(SubtitleTrack(language: remote.language, source: .web, state: .failed("Couldn’t download source captions")))
             }
         }
-        return (staged, sourceTracks)
+        return (staged, sourceTracks, selectedAudioLanguage)
     }
 
-    private static func hlsTracks(_ media: FoundMedia) async throws -> ([HLSTrack], [RemoteSubtitle]) {
+    private static func hlsTracks(_ media: FoundMedia) async throws -> ([HLSTrack], [RemoteSubtitle], String?) {
         let (data, _, _) = try await get(media, media.url)
         let text = String(decoding: data, as: UTF8.self)
         guard HLS.isMaster(text), let variant = HLS.pickVariant(text, base: media.url) else {
-            return ([try HLS.parseTrack(text, base: media.url)], [])
+            return ([try HLS.parseTrack(text, base: media.url)], [], nil)
         }
         var tracks: [HLSTrack] = []
         for url in [variant.video, variant.audio].compactMap({ $0 }) {
             let (trackData, _, _) = try await get(media, url)
             tracks.append(try HLS.parseTrack(String(decoding: trackData, as: UTF8.self), base: url))
         }
-        return (tracks, variant.subtitles)
+        return (tracks, variant.subtitles, variant.selectedAudioLanguage)
     }
 
     static func fileTrack(_ media: FoundMedia) async throws -> HLSTrack {
