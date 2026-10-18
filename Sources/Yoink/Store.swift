@@ -17,6 +17,7 @@ final class Job: Identifiable {
 
     let id = UUID()
     let pageURL: URL
+    let subtitleChoice: SubtitleChoice
     var title: String
     var state: State = .waiting
     var fraction: Double?
@@ -24,7 +25,8 @@ final class Job: Identifiable {
     var subtitles: [SubtitleTrack] = []
     @ObservationIgnored var task: Task<Void, Never>?
 
-    init(pageURL: URL) {
+    init(pageURL: URL, subtitleChoice: SubtitleChoice = .default) {
+        self.subtitleChoice = subtitleChoice
         self.pageURL = pageURL
         title = pageURL.host ?? pageURL.absoluteString
     }
@@ -68,11 +70,11 @@ final class Store {
         return url
     }
 
-    func add(_ text: String) {
+    func add(_ text: String, subtitleChoice: SubtitleChoice = .default) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmed.contains("://") ? trimmed : "https://\(trimmed)"), url.host != nil else { return }
         if folder == nil, pickFolder() == nil { return }
-        jobs.insert(Job(pageURL: url), at: 0)
+        jobs.insert(Job(pageURL: url, subtitleChoice: subtitleChoice), at: 0)
         startNext()
     }
 
@@ -132,7 +134,7 @@ final class Store {
         let output = Self.freeURL(in: folder, name: media.title)
         let started = Date()
         do {
-            let warning = try await Downloader.save(media, to: output, onAcquired: {
+            let warning = try await Downloader.save(media, to: output, subtitleChoice: job.subtitleChoice, onAcquired: {
                 if media.fetcher != nil { self.releaseSniffer() }
             }, onSubtitles: { phase, tracks in
                 if job.state != .cancelled, job.state != .stopping {

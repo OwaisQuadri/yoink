@@ -87,6 +87,7 @@ enum Downloader {
     static func save(
         _ media: FoundMedia,
         to output: URL,
+        subtitleChoice: SubtitleChoice = .default,
         work: URL = FileManager.default.temporaryDirectory.appendingPathComponent("yoink-\(UUID().uuidString)"),
         onAcquired: @escaping @MainActor () -> Void,
         onSubtitles: @escaping @MainActor (SubtitlePhase, [SubtitleTrack]) -> Void,
@@ -99,13 +100,13 @@ enum Downloader {
         let sourceTracks: [SubtitleTrack]
         do {
             try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
-            (staged, sourceTracks) = try await acquire(media, work: work, tracker: tracker)
+            (staged, sourceTracks) = try await acquire(media, work: work, tracker: tracker, subtitleChoice: subtitleChoice)
             await onAcquired()
         } catch {
             await onAcquired()
             throw error
         }
-        let outcome = try await SubtitlePipeline.complete(video: staged, work: work, sourceTracks: sourceTracks, onUpdate: onSubtitles)
+        let outcome = try await SubtitlePipeline.complete(video: staged, work: work, sourceTracks: sourceTracks, subtitleChoice: subtitleChoice, onUpdate: onSubtitles)
         var warning = outcome.warning
         let partial = output.appendingPathExtension("part")
         defer { try? FileManager.default.removeItem(at: partial) }
@@ -118,7 +119,7 @@ enum Downloader {
             try await SubtitlePipeline.mux(video: staged, tracks: [], to: partial)
             var tracks = outcome.tracks
             for index in tracks.indices where tracks[index].isReady { tracks[index].state = .failed("Couldn’t embed the subtitle track") }
-            warning = SubtitleOutcome(tracks: tracks).warning
+            warning = SubtitleOutcome(tracks: tracks, notices: outcome.notices).warning
             await onSubtitles(.muxing, tracks)
         }
         try Task.checkCancellation()
@@ -126,7 +127,7 @@ enum Downloader {
         return warning
     }
 
-    private static func acquire(_ media: FoundMedia, work: URL, tracker: ProgressTracker) async throws -> (URL, [SubtitleTrack]) {
+    private static func acquire(_ media: FoundMedia, work: URL, tracker: ProgressTracker, subtitleChoice: SubtitleChoice = .default) async throws -> (URL, [SubtitleTrack]) {
         let inputs: [String]
         var subtitles = media.subtitles
         var timeline = TransportTimeline.available([])
@@ -138,7 +139,7 @@ enum Downloader {
             var files: [String] = []
             for (index, track) in tracks.enumerated() {
                 let file = work.appendingPathComponent("track\(index)")
-                let downloadedTimeline = try await download(track, media: media, to: file, tracker: tracker, isVideo: index == 0)
+                let downloadedTimeline = try await download(track, media: media, to: file, tracker: tracker, isVideo: index == 0 && subtitleChoice != .none)
                 if index == 0 { timeline = downloadedTimeline }
                 files.append(file.path)
             }
@@ -153,17 +154,20 @@ enum Downloader {
             inputs = [media.url.absoluteString]
         }
         var sourceTracks: [SubtitleTrack] = []
-        for input in inputs {
-            do {
-                sourceTracks += try await SubtitlePipeline.extractSources(input: input, headers: media.kind == .dash ? media.headers : [:], work: work)
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch {
-                sourceTracks.append(SubtitleTrack(language: "und", source: .embedded, state: .failed("Couldn’t inspect source captions")))
+        if subtitleChoice != .none {
+            for input in inputs {
+                do {
+                    sourceTracks += try await SubtitlePipeline.extractSources(input: input, headers: media.kind == .dash ? media.headers : [:], work: work)
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    sourceTracks.append(SubtitleTrack(language: "und", source: .embedded, state: .failed("Couldn’t inspect source captions")))
+                }
             }
         }
         let staged = work.appendingPathComponent("video.mkv")
         try await remux(inputs, audioInput: inputs.count > 1 ? 1 : 0, headers: media.kind == .dash ? media.headers : [:], to: staged)
+        guard subtitleChoice != .none else { return (staged, []) }
         let stagedInventory = try await MediaInventory.read(staged)
         let videoStart = stagedInventory.streams.first { $0.codec_type == "video" }?.start_time.flatMap(Double.init) ?? 0
         let formatStart = stagedInventory.format.start_time.flatMap(Double.init) ?? 0

@@ -3,6 +3,49 @@ import XCTest
 
 final class DownloaderSubtitleTests: XCTestCase {
     @MainActor
+    func testNoneNeverRequestsCaptionsOrExtractsEmbeddedTracksAndSourceOnlySavesWithoutAudio() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("yoink-choice-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let caption = directory.appendingPathComponent("source.srt")
+        try "1\n00:00:00,100 --> 00:00:01,500\nEmbedded captions\n".write(to: caption, atomically: true, encoding: .utf8)
+        let video = directory.appendingPathComponent("source.mkv")
+        _ = try await MediaCommand.run(Downloader.ffmpegURL, ["-v", "error", "-f", "lavfi", "-i", "color=s=160x90:d=2", "-i", caption.path, "-c:v", "h264_videotoolbox", "-c:s", "srt", "-metadata:s:s:0", "language=eng", video.path])
+        let videoData = try Data(contentsOf: video)
+        CaptionChoiceProtocol.lock.withLock {
+            CaptionChoiceProtocol.video = videoData
+            CaptionChoiceProtocol.requests = []
+        }
+        XCTAssertTrue(URLProtocol.registerClass(CaptionChoiceProtocol.self))
+        defer { URLProtocol.unregisterClass(CaptionChoiceProtocol.self) }
+        let url = URL(string: "https://subtitle-choice.invalid/video.mkv")!
+        for choice in [SubtitleChoice.none, .sourceOnly] {
+            let output = directory.appendingPathComponent("\(choice == .none ? "none" : "source").mp4")
+            var releases = 0
+            var media = FoundMedia(url: url, kind: .file, title: "Fixture", headers: [:])
+            if choice == .none {
+                media.subtitles = [RemoteSubtitle(url: URL(string: "https://subtitle-choice.invalid/unreachable.vtt")!, language: "en")]
+            }
+            let work = directory.appendingPathComponent("work")
+            let warning = try await Downloader.save(media, to: output, subtitleChoice: choice, work: work, onAcquired: {
+                releases += 1
+                let files = (try? FileManager.default.contentsOfDirectory(atPath: work.path)) ?? []
+                XCTAssertEqual(files.contains { $0.hasSuffix(".srt") }, choice == .sourceOnly)
+            }, onSubtitles: { _, _ in
+                if choice == .none { XCTFail("None must skip subtitle processing") }
+            }, onProgress: { _ in })
+            XCTAssertNil(warning)
+            XCTAssertEqual(releases, 1)
+            let inventory = try await MediaInventory.read(output)
+            XCTAssertEqual(inventory.streams.filter { $0.codec_type == "subtitle" }.count, choice == .none ? 0 : 1)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: work.path))
+        }
+        let requests = CaptionChoiceProtocol.lock.withLock { CaptionChoiceProtocol.requests }
+        XCTAssertFalse(requests.isEmpty)
+        XCTAssertTrue(requests.allSatisfy { $0.path == "/video.mkv" })
+    }
+
+    @MainActor
     func testWorkspaceSetupFailureReleasesAcquisitionExactlyOnce() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("yoink-setup-test-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -98,4 +141,33 @@ final class DownloaderSubtitleTests: XCTestCase {
             XCTAssertTrue(cues.contains { $0.start > 9000 && $0.text.contains(marker) })
         }
     }
+}
+
+private final class CaptionChoiceProtocol: URLProtocol {
+    static let lock = NSLock()
+    static var video: Data?
+    static var requests: [URL] = []
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "subtitle-choice.invalid"
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let url = request.url!
+        let data = Self.lock.withLock {
+            Self.requests.append(url)
+            return Self.video
+        }
+        guard url.path == "/video.mkv", let data else {
+            client?.urlProtocol(self, didFailWithError: URLError(.fileDoesNotExist))
+            return
+        }
+        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }

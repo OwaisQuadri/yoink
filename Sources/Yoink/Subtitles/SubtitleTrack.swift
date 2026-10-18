@@ -43,6 +43,7 @@ struct SubtitleTrack: Identifiable, Equatable {
 
 struct SubtitleOutcome {
     let tracks: [SubtitleTrack]
+    var notices: [String] = []
 
     var readyTracks: [SubtitleTrack] { tracks.filter(\.isReady) }
 
@@ -51,7 +52,8 @@ struct SubtitleOutcome {
             guard case .failed(let reason) = track.state else { return nil }
             return "\(track.title) unavailable. \(reason)"
         }
-        return failures.isEmpty ? nil : failures.joined(separator: " ")
+        let warnings = notices + failures
+        return warnings.isEmpty ? nil : warnings.joined(separator: " ")
     }
 }
 
@@ -103,6 +105,10 @@ enum SubtitleLanguage {
         guard let alpha2 = code.identifier(.alpha2), let alpha3 = code.identifier(.alpha3), alpha2 != alpha3 else { return nil }
         return (alpha3, alpha2)
     }).merging(["fre": "fr", "ger": "de", "dut": "nl", "chi": "zh", "cze": "cs", "gre": "el", "rum": "ro", "per": "fa", "may": "ms", "bur": "my", "wel": "cy", "ice": "is", "slo": "sk", "alb": "sq", "arm": "hy", "baq": "eu", "geo": "ka", "mac": "mk", "tib": "bo"]) { _, value in value }
+
+    static func isIdentified(_ language: String) -> Bool {
+        language != "und" && Locale.LanguageCode.isoLanguageCodes.contains { canonical($0.identifier) == language }
+    }
 
     static func mp4(_ language: String) -> String {
         Locale.LanguageCode(canonical(language)).identifier(.alpha3) ?? "und"

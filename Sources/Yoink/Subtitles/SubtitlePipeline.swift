@@ -94,78 +94,109 @@ enum SubtitlePipeline {
 
     static func complete(
         video: URL, work: URL, sourceTracks: [SubtitleTrack],
+        subtitleChoice: SubtitleChoice = .default,
+        recognizer: Recognizer = recognize,
         onUpdate: @escaping @MainActor (SubtitlePhase, [SubtitleTrack]) -> Void
     ) async throws -> SubtitleOutcome {
+        guard subtitleChoice != .none else { return SubtitleOutcome(tracks: []) }
         var tracks = sourceTracks
         var language = "und"
+        var notices: [String] = []
         await onUpdate(.inspecting, tracks)
         do {
-            let inventory = try await MediaInventory.read(video)
             tracks += try await extractSources(input: video.path, headers: [:], work: work)
-            guard let audio = inventory.streams.first(where: { $0.codec_type == "audio" }) else {
-                throw YoinkError.downloadFailed("This video has no audio to generate subtitles from")
-            }
-            guard let duration = inventory.format.duration.flatMap(Double.init), duration.isFinite, duration > 0 else {
-                throw YoinkError.downloadFailed("Couldn’t determine the audio duration for subtitles")
-            }
-            _ = try SubtitleTime.duration(duration)
-            language = SubtitleLanguage.canonical(audio.tags?["language"])
-            let existingLanguages = Set(tracks.filter { $0.coverage == .full && $0.isReady }.map(\.language))
-            if language != "und", language != "unknown", existingLanguages.contains(language), existingLanguages.contains("en") {
+            if subtitleChoice == .sourceOnly {
                 await onUpdate(.muxing, tracks)
                 return SubtitleOutcome(tracks: tracks)
             }
-            await onUpdate(.transcribing(0), tracks)
-            try await InferenceQueue.shared.acquire()
-            do {
-                try await generate(video: video, work: work, duration: duration, language: &language, tracks: &tracks, onUpdate: onUpdate)
-                await InferenceQueue.shared.release()
-            } catch {
-                await InferenceQueue.shared.release()
-                throw error
+            let inventory = try await MediaInventory.read(video)
+            guard let audio = inventory.streams.first(where: { $0.codec_type == "audio" }) else {
+                throw YoinkError.downloadFailed("This video has no audio to generate subtitles from")
+            }
+            let metadataLanguage = SubtitleLanguage.canonical(audio.tags?["language"])
+            if SubtitleLanguage.isIdentified(metadataLanguage) { language = metadataLanguage }
+            if !subtitleChoice.isGenerationEnabled {
+                tracks = subtitleChoice.selectedTracks(tracks, language: language)
+                if language == "und" {
+                    notices.append("The original audio language is not identified in metadata. Enable subtitle generation to detect it.")
+                }
+                notices += missingWarnings(choice: subtitleChoice, language: language, tracks: tracks, reason: "Generation is disabled")
+            } else {
+                if language != "und" {
+                    tracks = subtitleChoice.selectedTracks(tracks, language: language)
+                }
+                if language == "und" || !missingTargets(choice: subtitleChoice, language: language, tracks: tracks).isEmpty {
+                    guard let duration = inventory.format.duration.flatMap(Double.init), duration.isFinite, duration > 0 else {
+                        throw YoinkError.downloadFailed("Couldn’t determine the audio duration for subtitles")
+                    }
+                    _ = try SubtitleTime.duration(duration)
+                    await onUpdate(.transcribing(0), tracks)
+                    try await InferenceQueue.shared.acquire()
+                    do {
+                        try await generate(video: video, work: work, duration: duration, language: &language, tracks: &tracks, subtitleChoice: subtitleChoice, onUpdate: onUpdate, recognizer: recognizer)
+                        await InferenceQueue.shared.release()
+                    } catch {
+                        await InferenceQueue.shared.release()
+                        throw error
+                    }
+                }
             }
         } catch is CancellationError {
             throw CancellationError()
         } catch {
-            for index in tracks.indices where !tracks[index].isReady {
-                if case .failed = tracks[index].state { continue }
-                tracks[index].state = .failed(error.localizedDescription)
-            }
-            let required: [(String, SubtitleTrack.Source)] = language == "en" ? [("en", .transcribed)] : [(language, .transcribed), ("en", .translated)]
-            for (target, source) in required where !tracks.contains(where: { $0.language == target && $0.coverage == .full && $0.isReady }) {
-                if !tracks.contains(where: { $0.source == source && $0.language == target }) {
-                    tracks.append(SubtitleTrack(language: target, source: source, state: .failed(error.localizedDescription)))
-                }
+            tracks = subtitleChoice.selectedTracks(tracks, language: language)
+            if subtitleChoice == .sourceOnly {
+                notices.append("Couldn’t inspect source captions. \(error.localizedDescription)")
+            } else {
+                notices += missingWarnings(choice: subtitleChoice, language: language, tracks: tracks, reason: error.localizedDescription)
             }
         }
         await onUpdate(.muxing, tracks)
-        return SubtitleOutcome(tracks: tracks)
+        return SubtitleOutcome(tracks: tracks, notices: notices)
+    }
+
+    private static func missingTargets(choice: SubtitleChoice, language: String, tracks: [SubtitleTrack]) -> [(language: String, source: SubtitleTrack.Source)] {
+        choice.targets(language: language).filter { target in
+            !tracks.contains { $0.language == target.language && $0.coverage == .full && $0.isReady }
+        }
+    }
+
+    private static func missingWarnings(choice: SubtitleChoice, language: String, tracks: [SubtitleTrack], reason: String) -> [String] {
+        missingTargets(choice: choice, language: language, tracks: tracks).map { target in
+            let name = target.source == .transcribed ? "Original" : "English"
+            return "\(name) subtitles unavailable. \(reason)"
+        }
     }
 
     static func generate(
         video: URL, work: URL, duration: Double, language: inout String, tracks: inout [SubtitleTrack],
+        subtitleChoice: SubtitleChoice = .default,
         onUpdate: @escaping @MainActor (SubtitlePhase, [SubtitleTrack]) -> Void,
         recognizer: Recognizer = recognize
     ) async throws {
+        guard subtitleChoice.isGenerationEnabled else {
+            tracks = subtitleChoice.selectedTracks(tracks, language: language)
+            return
+        }
         let chunkDuration = 300.0
         var firstResult: WhisperResult?
-        if language == "und" || language == "unknown" {
+        if !SubtitleLanguage.isIdentified(language) {
             for offset in stride(from: 0.0, to: duration, by: chunkDuration) {
                 await onUpdate(.transcribing(offset / duration), tracks)
                 let result = try await recognizer(video, work, offset, min(chunkDuration, duration - offset), "auto", false)
                 let detected = SubtitleLanguage.canonical(result.result.language)
-                if detected != "und", detected != "unknown", !result.transcription.isEmpty {
+                if SubtitleLanguage.isIdentified(detected), !result.cues(offset: 0, duration: Int((min(chunkDuration, duration - offset) * 1000).rounded())).isEmpty {
                     language = detected
                     if offset == 0 { firstResult = result }
                     break
                 }
             }
-            guard language != "und", language != "unknown" else {
+            guard SubtitleLanguage.isIdentified(language) else {
                 throw YoinkError.downloadFailed("Couldn’t detect spoken language. No subtitles were generated")
             }
         }
-        let required: [(String, SubtitleTrack.Source)] = language == "en" ? [("en", .transcribed)] : [(language, .transcribed), ("en", .translated)]
-        for (target, source) in required where !tracks.contains(where: { $0.language == target && $0.coverage == .full && $0.isReady }) {
+        tracks = subtitleChoice.selectedTracks(tracks, language: language)
+        for (target, source) in missingTargets(choice: subtitleChoice, language: language, tracks: tracks) {
             let index = tracks.count
             tracks.append(SubtitleTrack(language: target, source: source, state: .generating))
             let isTranslation = source == .translated
