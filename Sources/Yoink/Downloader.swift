@@ -139,7 +139,7 @@ enum Downloader {
             var files: [String] = []
             for (index, track) in tracks.enumerated() {
                 let file = work.appendingPathComponent("track\(index)")
-                let downloadedTimeline = try await download(track, media: media, to: file, tracker: tracker, isVideo: index == 0 && subtitleChoice != .none)
+                let downloadedTimeline = try await download(track, media: media, to: file, tracker: tracker, isVideo: index == 0 && !subtitleChoice.languages.isEmpty)
                 if index == 0 { timeline = downloadedTimeline }
                 files.append(file.path)
             }
@@ -154,7 +154,7 @@ enum Downloader {
             inputs = [media.url.absoluteString]
         }
         var sourceTracks: [SubtitleTrack] = []
-        if subtitleChoice != .none {
+        if !subtitleChoice.languages.isEmpty {
             for input in inputs {
                 do {
                     sourceTracks += try await SubtitlePipeline.extractSources(input: input, headers: media.kind == .dash ? media.headers : [:], work: work)
@@ -167,7 +167,7 @@ enum Downloader {
         }
         let staged = work.appendingPathComponent("video.mkv")
         try await remux(inputs, audioInput: inputs.count > 1 ? 1 : 0, headers: media.kind == .dash ? media.headers : [:], to: staged)
-        guard subtitleChoice != .none else { return (staged, []) }
+        guard !subtitleChoice.languages.isEmpty else { return (staged, []) }
         let stagedInventory = try await MediaInventory.read(staged)
         let videoStart = stagedInventory.streams.first { $0.codec_type == "video" }?.start_time.flatMap(Double.init) ?? 0
         let formatStart = stagedInventory.format.start_time.flatMap(Double.init) ?? 0

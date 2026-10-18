@@ -3,7 +3,7 @@ import XCTest
 
 final class DownloaderSubtitleTests: XCTestCase {
     @MainActor
-    func testNoneNeverRequestsCaptionsOrExtractsEmbeddedTracksAndSourceOnlySavesWithoutAudio() async throws {
+    func testNeitherSkipsAllCaptionsWithGenerationEnabledAndEnglishOnlySavesWithoutAudio() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("yoink-choice-test-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -19,25 +19,25 @@ final class DownloaderSubtitleTests: XCTestCase {
         XCTAssertTrue(URLProtocol.registerClass(CaptionChoiceProtocol.self))
         defer { URLProtocol.unregisterClass(CaptionChoiceProtocol.self) }
         let url = URL(string: "https://subtitle-choice.invalid/video.mkv")!
-        for choice in [SubtitleChoice.none, .sourceOnly] {
-            let output = directory.appendingPathComponent("\(choice == .none ? "none" : "source").mp4")
+        for choice in [SubtitleChoice(languages: []), .init(languages: .english, isGenerationEnabled: false)] {
+            let output = directory.appendingPathComponent("\(choice.languages.isEmpty ? "neither" : "english").mp4")
             var releases = 0
             var media = FoundMedia(url: url, kind: .file, title: "Fixture", headers: [:])
-            if choice == .none {
+            if choice.languages.isEmpty {
                 media.subtitles = [RemoteSubtitle(url: URL(string: "https://subtitle-choice.invalid/unreachable.vtt")!, language: "en")]
             }
             let work = directory.appendingPathComponent("work")
             let warning = try await Downloader.save(media, to: output, subtitleChoice: choice, work: work, onAcquired: {
                 releases += 1
                 let files = (try? FileManager.default.contentsOfDirectory(atPath: work.path)) ?? []
-                XCTAssertEqual(files.contains { $0.hasSuffix(".srt") }, choice == .sourceOnly)
+                XCTAssertEqual(files.contains { $0.hasSuffix(".srt") }, !choice.languages.isEmpty)
             }, onSubtitles: { _, _ in
-                if choice == .none { XCTFail("None must skip subtitle processing") }
+                if choice.languages.isEmpty { XCTFail("Neither must skip subtitle processing even with generation enabled") }
             }, onProgress: { _ in })
             XCTAssertNil(warning)
             XCTAssertEqual(releases, 1)
             let inventory = try await MediaInventory.read(output)
-            XCTAssertEqual(inventory.streams.filter { $0.codec_type == "subtitle" }.count, choice == .none ? 0 : 1)
+            XCTAssertEqual(inventory.streams.filter { $0.codec_type == "subtitle" }.count, choice.languages.isEmpty ? 0 : 1)
             XCTAssertFalse(FileManager.default.fileExists(atPath: work.path))
         }
         let requests = CaptionChoiceProtocol.lock.withLock { CaptionChoiceProtocol.requests }

@@ -35,23 +35,23 @@ final class SubtitlePipelineTests: XCTestCase {
             """.utf8))
     }
 
-    func testNoneSkipsInspectionRecognitionAndWarningsEvenForUnreadableMedia() async throws {
+    func testNeitherSkipsInspectionRecognitionAndWarningsEvenWithGenerationEnabled() async throws {
         let work = try workspace()
         let outcome = try await SubtitlePipeline.complete(
             video: work.appendingPathComponent("missing.mp4"), work: work,
             sourceTracks: [SubtitleTrack(language: "en", source: .web, state: .failed("Ignored"))],
-            subtitleChoice: .none,
-            recognizer: { _, _, _, _, _, _ in XCTFail("None must not recognize audio"); throw CancellationError() },
-            onUpdate: { _, _ in XCTFail("None must not start subtitle work") }
+            subtitleChoice: .init(languages: []),
+            recognizer: { _, _, _, _, _, _ in XCTFail("Neither must not recognize audio"); throw CancellationError() },
+            onUpdate: { _, _ in XCTFail("Neither must not start subtitle work") }
         )
         XCTAssertTrue(outcome.tracks.isEmpty)
         XCTAssertNil(outcome.warning)
     }
 
-    func testSourceOnlyPreservesEmbeddedCaptionsWithoutAudioOrRecognition() async throws {
+    func testEnglishOnlyWithGenerationDisabledPreservesEmbeddedCaptionsWithoutAudioOrRecognition() async throws {
         let work = try workspace()
         let video = try await video(in: work, isAudioIncluded: false, isEmbeddedIncluded: true)
-        let outcome = try await SubtitlePipeline.complete(video: video, work: work, sourceTracks: [], subtitleChoice: .sourceOnly, recognizer: { _, _, _, _, _, _ in
+        let outcome = try await SubtitlePipeline.complete(video: video, work: work, sourceTracks: [], subtitleChoice: .init(languages: .english, isGenerationEnabled: false), recognizer: { _, _, _, _, _, _ in
             XCTFail("Source captions must not require recognition")
             throw CancellationError()
         }) { _, _ in }
@@ -59,19 +59,93 @@ final class SubtitlePipelineTests: XCTestCase {
         XCTAssertNil(outcome.warning)
     }
 
+    func testEnglishOnlyDoesNotNeedOriginalMetadataOrAudioWhenMatchingCaptionsAreAvailable() async throws {
+        let work = try workspace()
+        let sources = try ["es", "en", "fr"].map { try caption(in: work, language: $0) }
+        for isAudioIncluded in [true, false] {
+            let video = try await video(in: work, language: "und", isAudioIncluded: isAudioIncluded)
+            for isGenerationEnabled in [true, false] {
+                let outcome = try await SubtitlePipeline.complete(video: video, work: work, sourceTracks: sources, subtitleChoice: .init(languages: .english, isGenerationEnabled: isGenerationEnabled), recognizer: { _, _, _, _, _, _ in
+                    XCTFail("Available English captions must not require original-language detection")
+                    throw CancellationError()
+                }) { _, _ in }
+                XCTAssertEqual(outcome.readyTracks, [sources[1]])
+                XCTAssertNil(outcome.warning)
+            }
+            let missing = try await SubtitlePipeline.complete(video: video, work: work, sourceTracks: [], subtitleChoice: .init(languages: .english, isGenerationEnabled: false), recognizer: { _, _, _, _, _, _ in
+                XCTFail("Disabled generation must not recognize audio")
+                throw CancellationError()
+            }) { _, _ in }
+            let warning = try XCTUnwrap(missing.warning)
+            XCTAssertTrue(warning.contains("English"))
+            XCTAssertFalse(warning.contains("Original"))
+            XCTAssertFalse(warning.contains("metadata"))
+        }
+    }
+
+    func testEnglishOnlyGeneratesOnlyEnglishAndDetectsWhetherTranslationIsNeeded() async throws {
+        let work = try workspace()
+        for (metadata, detected) in [("und", "es"), ("und", "en"), ("spa", "es"), ("eng", "en")] {
+            let video = try await video(in: work, language: metadata)
+            var languages: [String] = []
+            var translations: [Bool] = []
+            let outcome = try await SubtitlePipeline.complete(video: video, work: work, sourceTracks: [], subtitleChoice: .init(languages: .english), recognizer: { _, _, _, _, language, isTranslation in
+                languages.append(language)
+                translations.append(isTranslation)
+                return try self.recognition(language: detected)
+            }) { _, _ in }
+            let isTranslationNeeded = detected != "en"
+            XCTAssertEqual(languages, metadata == "und" ? (isTranslationNeeded ? ["auto", "es"] : ["auto"]) : [detected])
+            XCTAssertEqual(translations, metadata == "und" ? (isTranslationNeeded ? [false, true] : [false]) : [isTranslationNeeded])
+            XCTAssertEqual(outcome.readyTracks.map(\.language), ["en"])
+            XCTAssertEqual(outcome.readyTracks.map(\.source), [isTranslationNeeded ? .translated : .transcribed])
+            XCTAssertNil(outcome.warning)
+        }
+    }
+
+    func testEnglishOnlyDetectionFailureReportsOnlyMissingEnglishAndKeepsNoOriginalTrack() async throws {
+        let work = try workspace()
+        let video = try await video(in: work, language: "und")
+        let source = try caption(in: work, language: "es")
+        let outcome = try await SubtitlePipeline.complete(video: video, work: work, sourceTracks: [source], subtitleChoice: .init(languages: .english), recognizer: { _, _, _, _, _, _ in
+            throw YoinkError.downloadFailed("Detection unavailable")
+        }) { _, _ in }
+        XCTAssertTrue(outcome.tracks.isEmpty)
+        let warning = try XCTUnwrap(outcome.warning)
+        XCTAssertTrue(warning.contains("English"))
+        XCTAssertTrue(warning.contains("Detection unavailable"))
+        XCTAssertFalse(warning.contains("Original"))
+    }
+
+    func testBothSelectionsGenerateOneTrackForEnglishAudio() async throws {
+        let work = try workspace()
+        let video = try await video(in: work, language: "eng")
+        var calls = 0
+        let outcome = try await SubtitlePipeline.complete(video: video, work: work, sourceTracks: [], recognizer: { _, _, _, _, language, isTranslation in
+            calls += 1
+            XCTAssertEqual(language, "en")
+            XCTAssertFalse(isTranslation)
+            return try self.recognition(language: "en")
+        }) { _, _ in }
+        XCTAssertEqual(calls, 1)
+        XCTAssertEqual(outcome.readyTracks.map(\.language), ["en"])
+        XCTAssertEqual(outcome.readyTracks.map(\.source), [.transcribed])
+        XCTAssertNil(outcome.warning)
+    }
+
     func testDisabledGenerationFiltersSelectedAudioAndNeverDetectsOrInventsGeneratedFailures() async throws {
         let work = try workspace()
         let video = try await video(in: work)
         let sources = try ["es", "en", "fr", "und"].map { try caption(in: work, language: $0) }
-        for choice in [SubtitleChoice.original(isGenerationEnabled: false), .originalAndEnglish(isGenerationEnabled: false)] {
+        for choice in [SubtitleChoice(languages: .original, isGenerationEnabled: false), .init(isGenerationEnabled: false)] {
             let outcome = try await SubtitlePipeline.complete(video: video, work: work, sourceTracks: sources, subtitleChoice: choice, recognizer: { _, _, _, _, _, _ in
                 XCTFail("Disabled generation must not recognize audio")
                 throw CancellationError()
             }) { _, _ in }
-            XCTAssertEqual(outcome.readyTracks.map(\.language), choice == .original(isGenerationEnabled: false) ? ["es"] : ["es", "en"])
+            XCTAssertEqual(outcome.readyTracks.map(\.language), choice.languages == .original ? ["es"] : ["es", "en"])
             XCTAssertNil(outcome.warning)
         }
-        let outcome = try await SubtitlePipeline.complete(video: video, work: work, sourceTracks: [sources[1]], subtitleChoice: .original(isGenerationEnabled: false), recognizer: { _, _, _, _, _, _ in
+        let outcome = try await SubtitlePipeline.complete(video: video, work: work, sourceTracks: [sources[1]], subtitleChoice: .init(languages: .original, isGenerationEnabled: false), recognizer: { _, _, _, _, _, _ in
             XCTFail("A missing original must not enable recognition")
             throw CancellationError()
         }) { _, _ in }
@@ -85,12 +159,12 @@ final class SubtitlePipelineTests: XCTestCase {
         let sources = try ["es", "en"].map { try caption(in: work, language: $0) }
         for language in ["und", "invalid"] {
             let video = try await video(in: work, language: language)
-            for choice in [SubtitleChoice.original(isGenerationEnabled: false), .originalAndEnglish(isGenerationEnabled: false)] {
+            for choice in [SubtitleChoice(languages: .original, isGenerationEnabled: false), .init(isGenerationEnabled: false)] {
                 let outcome = try await SubtitlePipeline.complete(video: video, work: work, sourceTracks: sources, subtitleChoice: choice, recognizer: { _, _, _, _, _, _ in
                     XCTFail("Disabled generation must not detect language")
                     throw CancellationError()
                 }) { _, _ in }
-                XCTAssertEqual(outcome.readyTracks.map(\.language), choice == .original(isGenerationEnabled: false) ? [] : ["en"])
+                XCTAssertEqual(outcome.readyTracks.map(\.language), choice.languages == .original ? [] : ["en"])
                 XCTAssertTrue(try XCTUnwrap(outcome.warning).contains("not identified in metadata"))
                 XCTAssertEqual(outcome.tracks, outcome.readyTracks)
             }
@@ -104,7 +178,7 @@ final class SubtitlePipelineTests: XCTestCase {
         forced.coverage = .forced
         let sources = try [forced, caption(in: work, language: "en"), caption(in: work, language: "fr")]
         var calls = 0
-        let outcome = try await SubtitlePipeline.complete(video: video, work: work, sourceTracks: sources, subtitleChoice: .original(isGenerationEnabled: true), recognizer: { _, _, _, _, language, isTranslation in
+        let outcome = try await SubtitlePipeline.complete(video: video, work: work, sourceTracks: sources, subtitleChoice: .init(languages: .original), recognizer: { _, _, _, _, language, isTranslation in
             calls += 1
             XCTAssertEqual(language, "es")
             XCTAssertFalse(isTranslation)
@@ -157,7 +231,7 @@ final class SubtitlePipelineTests: XCTestCase {
         let work = try workspace()
         let video = try await video(in: work, language: "und")
         let source = try caption(in: work, language: "en")
-        let outcome = try await SubtitlePipeline.complete(video: video, work: work, sourceTracks: [source], subtitleChoice: .original(isGenerationEnabled: true), recognizer: { _, _, _, _, _, _ in
+        let outcome = try await SubtitlePipeline.complete(video: video, work: work, sourceTracks: [source], subtitleChoice: .init(languages: .original), recognizer: { _, _, _, _, _, _ in
             throw YoinkError.downloadFailed("Detection unavailable")
         }) { _, _ in }
         XCTAssertTrue(outcome.tracks.isEmpty)

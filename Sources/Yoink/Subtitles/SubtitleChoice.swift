@@ -1,38 +1,38 @@
 import Foundation
 
-enum SubtitleChoice: Equatable, Hashable {
-    case none
-    case sourceOnly
-    case original(isGenerationEnabled: Bool)
-    case originalAndEnglish(isGenerationEnabled: Bool)
+struct SubtitleChoice: Equatable {
+    struct Languages: OptionSet, Hashable {
+        let rawValue: Int
 
-    static let `default` = Self.originalAndEnglish(isGenerationEnabled: true)
+        static let original = Self(rawValue: 1 << 0)
+        static let english = Self(rawValue: 1 << 1)
 
-    var isGenerationEnabled: Bool {
-        switch self {
-        case .none, .sourceOnly: false
-        case .original(let isEnabled), .originalAndEnglish(let isEnabled): isEnabled
+        subscript(isSelected language: Self) -> Bool {
+            get { contains(language) }
+            set {
+                if newValue { insert(language) } else { remove(language) }
+            }
         }
     }
 
+    var languages: Languages = [.original, .english]
+    var isGenerationEnabled = true
+
+    static let `default` = Self()
+
     func targets(language: String) -> [(language: String, source: SubtitleTrack.Source)] {
-        switch self {
-        case .none, .sourceOnly: []
-        case .original: [(language, .transcribed)]
-        case .originalAndEnglish:
-            language == "en" ? [("en", .transcribed)] : [(language, .transcribed), ("en", .translated)]
+        var targets: [(language: String, source: SubtitleTrack.Source)] = []
+        if languages.contains(.original) { targets.append((language, .transcribed)) }
+        if languages.contains(.english), !targets.contains(where: { $0.language == "en" }) {
+            targets.append(("en", language == "en" ? .transcribed : .translated))
         }
+        return targets
     }
 
     func selectedTracks(_ tracks: [SubtitleTrack], language: String) -> [SubtitleTrack] {
-        switch self {
-        case .none: []
-        case .sourceOnly: tracks
-        case .original, .originalAndEnglish:
-            tracks.filter { track in
-                targets(language: language).contains { target in
-                    SubtitleLanguage.isIdentified(target.language) && track.language == target.language
-                }
+        tracks.filter { track in
+            targets(language: language).contains { target in
+                SubtitleLanguage.isIdentified(target.language) && track.language == target.language
             }
         }
     }

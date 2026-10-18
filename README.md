@@ -17,11 +17,11 @@ Bundled dependencies keep their own licenses. The [third-party notices](THIRD_PA
 
 ## Subtitles
 
-Choose **None**, **Source captions**, **Original only**, or **Original + English** beside the Download button. **None** skips subtitle downloads and processing. **Source captions** keeps available captions without generation. The two language choices include a **Generate missing subtitles** switch. Each download keeps its settings when queued or retried.
+Select **Original subtitles**, **English subtitles**, both, or neither beside the Download button. The checkboxes are independent. Selecting neither skips all subtitle downloads and processing, even if **Generate missing subtitles** remains on. The generation switch is disabled while neither language is selected and keeps its preference when languages are selected again. Each download keeps its settings when queued or retried.
 
-The default is **Original + English** with generation enabled. Yoink keeps matching source text captions and generates missing tracks from the selected audio. English audio gets one English track, not a second translated copy. Forced-only captions do not replace full subtitles.
+Both languages and generation are on by default. Yoink keeps matching source text captions and generates only missing selected tracks from the audio. English audio gets one English track, not a second translated copy. Forced-only captions do not replace full subtitles.
 
-With generation disabled, Yoink never runs speech recognition, including language detection. The language choices use the selected audio's language metadata. If that metadata is missing, Yoink reports a warning rather than guessing from captions. **Source captions** does not need audio language metadata.
+With generation disabled, Yoink never runs speech recognition, including language detection. Original subtitles use the selected audio's language metadata. If that metadata is missing, Yoink reports a warning rather than guessing from captions. English subtitles can use available English captions without audio or language metadata. When English generation needs language detection, Yoink detects the audio language and then transcribes English speech or translates other speech, without saving an unselected original track.
 
 HTML captions must belong to the selected video. If a blob player hides that ownership, Yoink uses manifest captions or audio generation instead of guessing.
 

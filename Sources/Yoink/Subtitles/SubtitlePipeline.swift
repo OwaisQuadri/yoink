@@ -98,34 +98,32 @@ enum SubtitlePipeline {
         recognizer: Recognizer = recognize,
         onUpdate: @escaping @MainActor (SubtitlePhase, [SubtitleTrack]) -> Void
     ) async throws -> SubtitleOutcome {
-        guard subtitleChoice != .none else { return SubtitleOutcome(tracks: []) }
+        guard !subtitleChoice.languages.isEmpty else { return SubtitleOutcome(tracks: []) }
         var tracks = sourceTracks
         var language = "und"
         var notices: [String] = []
         await onUpdate(.inspecting, tracks)
         do {
             tracks += try await extractSources(input: video.path, headers: [:], work: work)
-            if subtitleChoice == .sourceOnly {
-                await onUpdate(.muxing, tracks)
-                return SubtitleOutcome(tracks: tracks)
-            }
             let inventory = try await MediaInventory.read(video)
-            guard let audio = inventory.streams.first(where: { $0.codec_type == "audio" }) else {
-                throw YoinkError.downloadFailed("This video has no audio to generate subtitles from")
-            }
-            let metadataLanguage = SubtitleLanguage.canonical(audio.tags?["language"])
+            let audio = inventory.streams.first(where: { $0.codec_type == "audio" })
+            let metadataLanguage = SubtitleLanguage.canonical(audio?.tags?["language"])
             if SubtitleLanguage.isIdentified(metadataLanguage) { language = metadataLanguage }
             if !subtitleChoice.isGenerationEnabled {
                 tracks = subtitleChoice.selectedTracks(tracks, language: language)
-                if language == "und" {
+                if language == "und", subtitleChoice.languages.contains(.original) {
                     notices.append("The original audio language is not identified in metadata. Enable subtitle generation to detect it.")
                 }
                 notices += missingWarnings(choice: subtitleChoice, language: language, tracks: tracks, reason: "Generation is disabled")
             } else {
-                if language != "und" {
+                if language != "und" || !subtitleChoice.languages.contains(.original) {
                     tracks = subtitleChoice.selectedTracks(tracks, language: language)
                 }
-                if language == "und" || !missingTargets(choice: subtitleChoice, language: language, tracks: tracks).isEmpty {
+                let isOriginalDetectionNeeded = language == "und" && subtitleChoice.languages.contains(.original)
+                if isOriginalDetectionNeeded || !missingTargets(choice: subtitleChoice, language: language, tracks: tracks).isEmpty {
+                    guard audio != nil else {
+                        throw YoinkError.downloadFailed("This video has no audio to generate subtitles from")
+                    }
                     guard let duration = inventory.format.duration.flatMap(Double.init), duration.isFinite, duration > 0 else {
                         throw YoinkError.downloadFailed("Couldn’t determine the audio duration for subtitles")
                     }
@@ -145,11 +143,7 @@ enum SubtitlePipeline {
             throw CancellationError()
         } catch {
             tracks = subtitleChoice.selectedTracks(tracks, language: language)
-            if subtitleChoice == .sourceOnly {
-                notices.append("Couldn’t inspect source captions. \(error.localizedDescription)")
-            } else {
-                notices += missingWarnings(choice: subtitleChoice, language: language, tracks: tracks, reason: error.localizedDescription)
-            }
+            notices += missingWarnings(choice: subtitleChoice, language: language, tracks: tracks, reason: error.localizedDescription)
         }
         await onUpdate(.muxing, tracks)
         return SubtitleOutcome(tracks: tracks, notices: notices)
@@ -163,7 +157,7 @@ enum SubtitlePipeline {
 
     private static func missingWarnings(choice: SubtitleChoice, language: String, tracks: [SubtitleTrack], reason: String) -> [String] {
         missingTargets(choice: choice, language: language, tracks: tracks).map { target in
-            let name = target.source == .transcribed ? "Original" : "English"
+            let name = target.language == "en" && choice.languages.contains(.english) ? "English" : "Original"
             return "\(name) subtitles unavailable. \(reason)"
         }
     }
@@ -174,7 +168,7 @@ enum SubtitlePipeline {
         onUpdate: @escaping @MainActor (SubtitlePhase, [SubtitleTrack]) -> Void,
         recognizer: Recognizer = recognize
     ) async throws {
-        guard subtitleChoice.isGenerationEnabled else {
+        guard !subtitleChoice.languages.isEmpty, subtitleChoice.isGenerationEnabled else {
             tracks = subtitleChoice.selectedTracks(tracks, language: language)
             return
         }

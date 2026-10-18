@@ -138,27 +138,14 @@ struct ContentView: View {
     }
 
     private var subtitleOptions: some View {
-        let isGenerationEnabled = subtitleChoice == .none || subtitleChoice == .sourceOnly || subtitleChoice.isGenerationEnabled
-        return VStack(alignment: .leading, spacing: 12) {
-            Picker("Subtitles", selection: $subtitleChoice) {
-                Text("None").tag(SubtitleChoice.none)
-                Text("Source captions").tag(SubtitleChoice.sourceOnly)
-                Text("Original only").tag(SubtitleChoice.original(isGenerationEnabled: isGenerationEnabled))
-                Text("Original + English").tag(SubtitleChoice.originalAndEnglish(isGenerationEnabled: isGenerationEnabled))
-            }
-            if subtitleChoice != .none, subtitleChoice != .sourceOnly {
-                Toggle("Generate missing subtitles", isOn: Binding(
-                    get: { subtitleChoice.isGenerationEnabled },
-                    set: { isEnabled in
-                        switch subtitleChoice {
-                        case .original: subtitleChoice = .original(isGenerationEnabled: isEnabled)
-                        case .originalAndEnglish: subtitleChoice = .originalAndEnglish(isGenerationEnabled: isEnabled)
-                        case .none, .sourceOnly: break
-                        }
-                    }
-                ))
+        VStack(alignment: .leading, spacing: 12) {
+            Toggle("Original subtitles", isOn: $subtitleChoice.languages[isSelected: .original])
+                .toggleStyle(.checkbox)
+            Toggle("English subtitles", isOn: $subtitleChoice.languages[isSelected: .english])
+                .toggleStyle(.checkbox)
+            Toggle("Generate missing subtitles", isOn: $subtitleChoice.isGenerationEnabled)
                 .toggleStyle(.switch)
-            }
+                .disabled(subtitleChoice.languages.isEmpty)
         }
         .padding(16)
     }
@@ -272,7 +259,7 @@ struct JobRow: View {
         case .subtitling(let phase):
             switch phase {
             case .inspecting: return "Preparing subtitle tracks…"
-            case .transcribing(let fraction): return "Generating original subtitles… \(Int(fraction * 100))%"
+            case .transcribing(let fraction): return "Generating subtitles… \(Int(fraction * 100))%"
             case .translating(let fraction): return "Translating subtitles to English… \(Int(fraction * 100))%"
             case .muxing: return job.subtitles.contains(where: \.isReady) ? "Saving selectable subtitle tracks…" : "Saving video…"
             }
