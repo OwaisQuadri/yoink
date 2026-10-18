@@ -81,12 +81,14 @@ set -euo pipefail
 print -r -- "$*" >> "$TEST_LOG"
 metadata() {
   local state=$1
+  local asset_tag=v0.0.10
+  if [[ $state == true ]]; then asset_tag=untagged-0123456789abcdef0123; fi
   print -n '{"id":200,"tag_name":"v0.0.10","draft":'
   print -n "$state"
   print -n ',"prerelease":false,"target_commitish":"'"$GITHUB_SHA"'","assets":['
   local separator=''
   for name in Yoink-0.0.10-11.dmg appcast.xml Yoink-0.0.10-11-FFmpeg-source.tar.gz SHA256SUMS; do
-    print -n "$separator"'{"id":201,"name":"'"$name"'","size":11,"browser_download_url":"https://github.com/test-owner/test-repo/releases/download/v0.0.10/'"$name"'"}'
+    print -n "$separator"'{"id":201,"name":"'"$name"'","size":11,"browser_download_url":"https://github.com/test-owner/test-repo/releases/download/'"$asset_tag"'/'"$name"'"}'
     separator=,
   done
   print ']}'
@@ -112,13 +114,18 @@ if [[ $1 == api ]]; then
     if [[ $TEST_MODE == reused-build ]]; then
       sed -e 's/<sparkle:version>9</<sparkle:version>11</' -e 's/Yoink-0.0.8-9.dmg/Yoink-0.0.8-11.dmg/' previous.xml
     else cat previous.xml; fi
-  elif [[ "$*" == *releases/tags/* || "$*" == *releases/200* ]]; then
+  elif [[ "$*" == *releases/tags/* ]]; then
+    exit 44
+  elif [[ "$*" == *releases/200* ]]; then
     if [[ "$*" == *'--jq'* ]]; then print 200; else metadata true; fi
   else exit 92; fi
 elif [[ $1 == release && $2 == create ]]; then
   [[ "$*" == *'--draft'* && "$*" == *"--target $GITHUB_SHA"* ]]
   print DRAFT > draft
   [[ $TEST_MODE != upload-failure ]]
+elif [[ $1 == release && $2 == view ]]; then
+  [[ -f draft ]]
+  print 200
 elif [[ $1 == release && $2 == download ]]; then
   destination=${@[-1]}
   cp build/updates/0.0.10-11/* "$destination/"
@@ -170,6 +177,13 @@ for mode in build-failure existing-tag tag-query-failure existing-release reused
   fi
   print "PASS: $mode"
 done
+(cd "$fixture"; TEST_MODE=success ./bin/gh api repos/test-owner/test-repo/releases/200) > "$work/pending-draft.json"
+"$work/helper" assets "$fixture/Resources/Info.plist" "$work/pending-draft.json" test-owner/test-repo draft > /dev/null
+sed 's/untagged-0123456789abcdef0123/arbitrary/' "$work/pending-draft.json" > "$work/invalid-draft.json"
+if "$work/helper" assets "$fixture/Resources/Info.plist" "$work/invalid-draft.json" test-owner/test-repo draft > /dev/null 2>&1; then exit 1; fi
+sed 's/"draft":true/"draft":false/' "$work/pending-draft.json" > "$work/invalid-published.json"
+if "$work/helper" assets "$fixture/Resources/Info.plist" "$work/invalid-published.json" test-owner/test-repo published > /dev/null 2>&1; then exit 1; fi
+print 'PASS: draft placeholder asset URLs are accepted only for drafts; arbitrary and published placeholder URLs are rejected.'
 cat > "$fixture/bin/security" <<'MOCK'
 #!/bin/zsh -f
 set -euo pipefail

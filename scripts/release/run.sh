@@ -114,7 +114,9 @@ check_unused_tag
 gh release create "$tag" "$output/$archive" "$output/appcast.xml" "$output/$source_archive" "$output/SHA256SUMS" \
   --draft --target "$GITHUB_SHA" --title "Yoink $version" \
   --notes "Source-built universal macOS release. Matching FFmpeg source and dependency notices accompany the app. Commit: $GITHUB_SHA"
-gh api "repos/$GH_REPO/releases/tags/$tag" > "$work/draft.json"
+draft_id=$(gh release view "$tag" --json databaseId --jq .databaseId)
+[[ $draft_id =~ ^[0-9]+$ ]]
+gh api "repos/$GH_REPO/releases/$draft_id" > "$work/draft.json"
 release_id=$("$helper" assets "$plist" "$work/draft.json" "$GH_REPO" draft)
 verify_download "$work/staged"
 check_head

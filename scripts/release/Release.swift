@@ -127,8 +127,13 @@ struct Feed {
 func checkAssets(_ release: Release, app: AppVersion, repository: String) throws {
     try require(release.tag_name == app.tag, "Release tag does not match version")
     try require(release.assets.count == 4 && Set(release.assets.map(\.name)) == app.assets, "Release must contain exactly the four generated assets")
+    var downloadTag = app.tag
+    if release.isDraft, let first = release.assets.first, let url = URL(string: first.browser_download_url) {
+        let candidate = url.deletingLastPathComponent().lastPathComponent
+        if candidate.range(of: "^untagged-[a-f0-9]+$", options: .regularExpression) != nil { downloadTag = candidate }
+    }
     for asset in release.assets {
-        try require(asset.size > 0 && asset.browser_download_url == "https://github.com/\(repository)/releases/download/\(app.tag)/\(asset.name)", "Invalid release asset")
+        try require(asset.size > 0 && asset.browser_download_url == "https://github.com/\(repository)/releases/download/\(downloadTag)/\(asset.name)", "Invalid release asset")
     }
 }
 
