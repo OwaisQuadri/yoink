@@ -13,7 +13,7 @@ final class DownloaderSubtitleTests: XCTestCase {
         _ = try await MediaCommand.run(Downloader.ffmpegURL, ["-v", "error", "-f", "lavfi", "-i", "color=s=160x90:d=2", "-i", caption.path, "-c:v", "h264_videotoolbox", "-c:s", "srt", "-metadata:s:s:0", "language=eng", video.path])
         let videoData = try Data(contentsOf: video)
         CaptionChoiceProtocol.lock.withLock {
-            CaptionChoiceProtocol.video = videoData
+            CaptionChoiceProtocol.responses = ["/video.mkv": videoData]
             CaptionChoiceProtocol.requests = []
         }
         XCTAssertTrue(URLProtocol.registerClass(CaptionChoiceProtocol.self))
@@ -43,6 +43,69 @@ final class DownloaderSubtitleTests: XCTestCase {
         let requests = CaptionChoiceProtocol.lock.withLock { CaptionChoiceProtocol.requests }
         XCTAssertFalse(requests.isEmpty)
         XCTAssertTrue(requests.allSatisfy { $0.path == "/video.mkv" })
+    }
+
+    @MainActor
+    func testHLSOriginalOnlyPreservesSelectedSpanishRenditionForUntaggedAudioWithoutGeneration() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("yoink-hls-language-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let video = directory.appendingPathComponent("video.ts")
+        let audio = directory.appendingPathComponent("audio.ts")
+        _ = try await MediaCommand.run(Downloader.ffmpegURL, ["-v", "error", "-f", "lavfi", "-i", "color=s=160x90:d=2", "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono", "-c:v", "h264_videotoolbox", "-c:a", "aac", "-t", "2", "-f", "mpegts", video.path])
+        _ = try await MediaCommand.run(Downloader.ffmpegURL, ["-v", "error", "-i", video.path, "-map", "0:a:0", "-c", "copy", "-f", "mpegts", audio.path])
+        let inventory = try await MediaInventory.read(audio)
+        XCTAssertEqual(SubtitleLanguage.canonical(try XCTUnwrap(inventory.streams.first { $0.codec_type == "audio" }).tags?["language"]), "und")
+        let videoData = try Data(contentsOf: video)
+        let audioData = try Data(contentsOf: audio)
+        XCTAssertTrue(URLProtocol.registerClass(CaptionChoiceProtocol.self))
+        defer { URLProtocol.unregisterClass(CaptionChoiceProtocol.self) }
+        for isExternal in [true, false] {
+            let renditions = isExternal ? """
+                #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="English",LANGUAGE="en",URI="unselected-en.m3u8"
+                #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="Spanish",LANGUAGE="spa-ES",DEFAULT=YES,URI="audio.m3u8"
+                #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="French",LANGUAGE="fr",URI="unselected-fr.m3u8"
+                """ : """
+                #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="Spanish",LANGUAGE="spa-ES",DEFAULT=YES
+                """
+            let master = """
+                #EXTM3U
+                \(renditions)
+                #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="unused",NAME="English",LANGUAGE="en",DEFAULT=YES,URI="unselected-en.m3u8"
+                #EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="Spanish",LANGUAGE="es",URI="es.vtt"
+                #EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="English",LANGUAGE="en",URI="en.vtt"
+                #EXT-X-STREAM-INF:BANDWIDTH=100,AUDIO="audio",SUBTITLES="subs"
+                video.m3u8
+                """
+            CaptionChoiceProtocol.lock.withLock {
+                CaptionChoiceProtocol.responses = [
+                    "/master.m3u8": Data(master.utf8),
+                    "/video.m3u8": Data("#EXTM3U\n#EXTINF:2,\nvideo.ts\n#EXT-X-ENDLIST\n".utf8),
+                    "/audio.m3u8": Data("#EXTM3U\n#EXTINF:2,\naudio.ts\n#EXT-X-ENDLIST\n".utf8),
+                    "/video.ts": videoData,
+                    "/audio.ts": audioData,
+                    "/es.vtt": Data("WEBVTT\n\n00:00:00.100 --> 00:00:01.500\nSpanish source captions\n".utf8),
+                    "/en.vtt": Data("WEBVTT\n\n00:00:00.100 --> 00:00:01.500\nEnglish source captions\n".utf8)
+                ]
+                CaptionChoiceProtocol.requests = []
+            }
+            let output = directory.appendingPathComponent("\(isExternal ? "external" : "in-band").mp4")
+            let media = FoundMedia(url: URL(string: "https://subtitle-choice.invalid/master.m3u8")!, kind: .hls, title: "Fixture", headers: [:])
+            let warning = try await Downloader.save(media, to: output, subtitleChoice: .init(languages: .original, isGenerationEnabled: false), onAcquired: {}, onSubtitles: { phase, _ in
+                switch phase {
+                case .transcribing, .translating: XCTFail("Disabled generation must never invoke Whisper")
+                case .inspecting, .muxing: break
+                }
+            }, onProgress: { _ in })
+            XCTAssertNil(warning)
+            let saved = try await MediaInventory.read(output)
+            XCTAssertEqual(saved.streams.filter { $0.codec_type == "subtitle" }.compactMap { $0.tags?["language"] }, ["spa"])
+            let captions = try await MediaCommand.run(Downloader.ffmpegURL, ["-v", "error", "-i", output.path, "-map", "0:s:0", "-f", "srt", "-"])
+            XCTAssertTrue(String(decoding: captions, as: UTF8.self).contains("Spanish source captions"))
+            let requests = CaptionChoiceProtocol.lock.withLock { CaptionChoiceProtocol.requests.map(\.path) }
+            XCTAssertFalse(requests.contains { $0.contains("unselected") })
+            XCTAssertEqual(requests.contains("/audio.ts"), isExternal)
+        }
     }
 
     @MainActor
@@ -145,7 +208,7 @@ final class DownloaderSubtitleTests: XCTestCase {
 
 private final class CaptionChoiceProtocol: URLProtocol {
     static let lock = NSLock()
-    static var video: Data?
+    static var responses: [String: Data] = [:]
     static var requests: [URL] = []
 
     override class func canInit(with request: URLRequest) -> Bool {
@@ -158,9 +221,9 @@ private final class CaptionChoiceProtocol: URLProtocol {
         let url = request.url!
         let data = Self.lock.withLock {
             Self.requests.append(url)
-            return Self.video
+            return Self.responses[url.path]
         }
-        guard url.path == "/video.mkv", let data else {
+        guard let data else {
             client?.urlProtocol(self, didFailWithError: URLError(.fileDoesNotExist))
             return
         }

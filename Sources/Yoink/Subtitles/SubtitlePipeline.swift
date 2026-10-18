@@ -94,6 +94,7 @@ enum SubtitlePipeline {
 
     static func complete(
         video: URL, work: URL, sourceTracks: [SubtitleTrack],
+        selectedAudioLanguage: String? = nil,
         subtitleChoice: SubtitleChoice = .default,
         recognizer: Recognizer = recognize,
         onUpdate: @escaping @MainActor (SubtitlePhase, [SubtitleTrack]) -> Void
@@ -108,7 +109,11 @@ enum SubtitlePipeline {
             let inventory = try await MediaInventory.read(video)
             let audio = inventory.streams.first(where: { $0.codec_type == "audio" })
             let metadataLanguage = SubtitleLanguage.canonical(audio?.tags?["language"])
-            if SubtitleLanguage.isIdentified(metadataLanguage) { language = metadataLanguage }
+            if SubtitleLanguage.isIdentified(metadataLanguage) {
+                language = metadataLanguage
+            } else if audio != nil, let selectedAudioLanguage, SubtitleLanguage.isIdentified(selectedAudioLanguage) {
+                language = selectedAudioLanguage
+            }
             if !subtitleChoice.isGenerationEnabled {
                 tracks = subtitleChoice.selectedTracks(tracks, language: language)
                 if language == "und", subtitleChoice.languages.contains(.original) {

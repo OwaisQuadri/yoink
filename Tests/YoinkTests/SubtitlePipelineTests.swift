@@ -154,6 +154,20 @@ final class SubtitlePipelineTests: XCTestCase {
         XCTAssertFalse(try XCTUnwrap(outcome.warning).contains("English"))
     }
 
+    func testSelectedRenditionLanguageOnlyFillsUnidentifiedAudioMetadataWithoutRecognition() async throws {
+        let work = try workspace()
+        let sources = try ["es", "en"].map { try caption(in: work, language: $0) }
+        for (metadata, isAudioIncluded, expected) in [("und", true, ["es"]), ("invalid", true, ["es"]), ("eng", true, ["en"]), ("und", false, [])] {
+            let video = try await video(in: work, language: metadata, isAudioIncluded: isAudioIncluded)
+            let outcome = try await SubtitlePipeline.complete(video: video, work: work, sourceTracks: sources, selectedAudioLanguage: "es", subtitleChoice: .init(languages: .original, isGenerationEnabled: false), recognizer: { _, _, _, _, _, _ in
+                XCTFail("Disabled generation must never recognize audio")
+                throw CancellationError()
+            }) { _, _ in }
+            XCTAssertEqual(outcome.readyTracks.map(\.language), expected)
+            if isAudioIncluded { XCTAssertNil(outcome.warning) }
+        }
+    }
+
     func testUnidentifiedOriginalIsNotGuessedFromSubtitleLanguageWhenGenerationIsDisabled() async throws {
         let work = try workspace()
         let sources = try ["es", "en"].map { try caption(in: work, language: $0) }

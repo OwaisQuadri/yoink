@@ -98,15 +98,16 @@ enum Downloader {
 
         let staged: URL
         let sourceTracks: [SubtitleTrack]
+        let selectedAudioLanguage: String?
         do {
             try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
-            (staged, sourceTracks) = try await acquire(media, work: work, tracker: tracker, subtitleChoice: subtitleChoice)
+            (staged, sourceTracks, selectedAudioLanguage) = try await acquire(media, work: work, tracker: tracker, subtitleChoice: subtitleChoice)
             await onAcquired()
         } catch {
             await onAcquired()
             throw error
         }
-        let outcome = try await SubtitlePipeline.complete(video: staged, work: work, sourceTracks: sourceTracks, subtitleChoice: subtitleChoice, onUpdate: onSubtitles)
+        let outcome = try await SubtitlePipeline.complete(video: staged, work: work, sourceTracks: sourceTracks, selectedAudioLanguage: selectedAudioLanguage, subtitleChoice: subtitleChoice, onUpdate: onSubtitles)
         var warning = outcome.warning
         let partial = output.appendingPathExtension("part")
         defer { try? FileManager.default.removeItem(at: partial) }
@@ -127,13 +128,16 @@ enum Downloader {
         return warning
     }
 
-    private static func acquire(_ media: FoundMedia, work: URL, tracker: ProgressTracker, subtitleChoice: SubtitleChoice = .default) async throws -> (URL, [SubtitleTrack]) {
+    private static func acquire(_ media: FoundMedia, work: URL, tracker: ProgressTracker, subtitleChoice: SubtitleChoice = .default) async throws -> (URL, [SubtitleTrack], String?) {
         let inputs: [String]
+        var selectedAudioLanguage: String?
         var subtitles = media.subtitles
         var timeline = TransportTimeline.available([])
         switch media.kind {
         case .hls:
-            let (tracks, renditions) = try await hlsTracks(media)
+            let tracks: [HLSTrack]
+            let renditions: [RemoteSubtitle]
+            (tracks, renditions, selectedAudioLanguage) = try await hlsTracks(media)
             subtitles += renditions
             await MainActor.run { tracker.total = tracks.reduce(0) { $0 + $1.segments.count } }
             var files: [String] = []
@@ -167,7 +171,7 @@ enum Downloader {
         }
         let staged = work.appendingPathComponent("video.mkv")
         try await remux(inputs, audioInput: inputs.count > 1 ? 1 : 0, headers: media.kind == .dash ? media.headers : [:], to: staged)
-        guard !subtitleChoice.languages.isEmpty else { return (staged, []) }
+        guard !subtitleChoice.languages.isEmpty else { return (staged, [], selectedAudioLanguage) }
         let stagedInventory = try await MediaInventory.read(staged)
         let videoStart = stagedInventory.streams.first { $0.codec_type == "video" }?.start_time.flatMap(Double.init) ?? 0
         let formatStart = stagedInventory.format.start_time.flatMap(Double.init) ?? 0
@@ -188,21 +192,21 @@ enum Downloader {
                 sourceTracks.append(SubtitleTrack(language: remote.language, source: .web, state: .failed("Couldn’t download source captions")))
             }
         }
-        return (staged, sourceTracks)
+        return (staged, sourceTracks, selectedAudioLanguage)
     }
 
-    private static func hlsTracks(_ media: FoundMedia) async throws -> ([HLSTrack], [RemoteSubtitle]) {
+    private static func hlsTracks(_ media: FoundMedia) async throws -> ([HLSTrack], [RemoteSubtitle], String?) {
         let (data, _, _) = try await get(media, media.url)
         let text = String(decoding: data, as: UTF8.self)
         guard HLS.isMaster(text), let variant = HLS.pickVariant(text, base: media.url) else {
-            return ([try HLS.parseTrack(text, base: media.url)], [])
+            return ([try HLS.parseTrack(text, base: media.url)], [], nil)
         }
         var tracks: [HLSTrack] = []
         for url in [variant.video, variant.audio].compactMap({ $0 }) {
             let (trackData, _, _) = try await get(media, url)
             tracks.append(try HLS.parseTrack(String(decoding: trackData, as: UTF8.self), base: url))
         }
-        return (tracks, variant.subtitles)
+        return (tracks, variant.subtitles, variant.selectedAudioLanguage)
     }
 
     static func fileTrack(_ media: FoundMedia) async throws -> HLSTrack {

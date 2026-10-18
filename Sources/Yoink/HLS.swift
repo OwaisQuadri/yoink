@@ -36,7 +36,7 @@ enum HLS {
         text.contains("#EXT-X-STREAM-INF")
     }
 
-    static func pickVariant(_ text: String, base: URL) -> (video: URL, audio: URL?, subtitles: [RemoteSubtitle])? {
+    static func pickVariant(_ text: String, base: URL) -> (video: URL, audio: URL?, subtitles: [RemoteSubtitle], selectedAudioLanguage: String?)? {
         let all = lines(text)
         var best: (bandwidth: Int, url: URL, audioGroup: String?, subtitleGroup: String?)?
         for (index, line) in all.enumerated() where line.hasPrefix("#EXT-X-STREAM-INF") {
@@ -47,18 +47,19 @@ enum HLS {
             if bandwidth > best?.bandwidth ?? -1 { best = (bandwidth, url, attributes["AUDIO"], attributes["SUBTITLES"]) }
         }
         guard let best else { return nil }
-        let audio = best.audioGroup.flatMap { group in
-            let renditions = all.filter { $0.hasPrefix("#EXT-X-MEDIA") }.map(attributes)
-                .filter { $0["TYPE"] == "AUDIO" && $0["GROUP-ID"] == group && $0["URI"] != nil }
-            let chosen = renditions.first { $0["DEFAULT"] == "YES" } ?? renditions.first
-            return chosen.flatMap { URL(string: $0["URI"]!, relativeTo: base)?.absoluteURL }
-        }
+        let audioRenditions = all.filter { $0.hasPrefix("#EXT-X-MEDIA") }.map(attributes)
+            .filter { best.audioGroup != nil && $0["TYPE"] == "AUDIO" && $0["GROUP-ID"] == best.audioGroup }
+        let externalRenditions = audioRenditions.filter { $0["URI"] != nil }
+        let chosen = externalRenditions.first { $0["DEFAULT"] == "YES" } ?? externalRenditions.first
+        let audio = chosen.flatMap { URL(string: $0["URI"]!, relativeTo: base)?.absoluteURL }
+        let inBandRendition = audioRenditions.count == 1 && audioRenditions[0]["URI"] == nil ? audioRenditions.first : nil
+        let selectedAudioLanguage = (audio != nil ? chosen : inBandRendition).map { SubtitleLanguage.canonical($0["LANGUAGE"]) }
         let subtitles = all.filter { $0.hasPrefix("#EXT-X-MEDIA") }.map(attributes).compactMap { rendition -> RemoteSubtitle? in
             guard rendition["TYPE"] == "SUBTITLES", rendition["GROUP-ID"] == best.subtitleGroup,
                   let uri = rendition["URI"], let url = URL(string: uri, relativeTo: base)?.absoluteURL else { return nil }
             return RemoteSubtitle(url: url, language: SubtitleLanguage.canonical(rendition["LANGUAGE"]), isForced: rendition["FORCED"] == "YES")
         }
-        return (best.url, audio, subtitles)
+        return (best.url, audio, subtitles, selectedAudioLanguage)
     }
 
     static func parseTrack(_ text: String, base: URL) throws -> HLSTrack {
