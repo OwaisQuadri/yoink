@@ -12,12 +12,16 @@ Bundled dependencies keep their own licenses. The [third-party notices](THIRD_PA
 
 1. Open Yoink.
 2. Paste the link of the page that plays the video.
-3. Click **Download**. The first time, choose the folder for your videos.
+3. Use **Subtitle options** beside **Download** to choose subtitles for this download. Then click **Download**. The first time, choose the folder for your videos.
 4. When the row shows **Saved**, click **Play**, or open the file from the folder.
 
 ## Subtitles
 
-Yoink keeps source text captions and generates missing original-language and English subtitles from the selected audio. English audio gets one English track, not a second translated copy. Forced-only captions do not replace full subtitles.
+Choose **None**, **Source captions**, **Original only**, or **Original + English** beside the Download button. **None** skips subtitle downloads and processing. **Source captions** keeps available captions without generation. The two language choices include a **Generate missing subtitles** switch. Each download keeps its settings when queued or retried.
+
+The default is **Original + English** with generation enabled. Yoink keeps matching source text captions and generates missing tracks from the selected audio. English audio gets one English track, not a second translated copy. Forced-only captions do not replace full subtitles.
+
+With generation disabled, Yoink never runs speech recognition, including language detection. The language choices use the selected audio's language metadata. If that metadata is missing, Yoink reports a warning rather than guessing from captions. **Source captions** does not need audio language metadata.
 
 HTML captions must belong to the selected video. If a blob player hides that ownership, Yoink uses manifest captions or audio generation instead of guessing.
 
