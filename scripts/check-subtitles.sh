@@ -83,7 +83,7 @@ export YOINK_ENGLISH_FIXTURE=$work/site/english.mp4
 export YOINK_SUBTITLE_OUTPUT=$work/spanish-subtitled.mp4
 export YOINK_MEDIA_FIXTURE_URL=$base/spanish.mp4
 export YOINK_MEDIA_OUTPUT=$work/direct-subtitled.mp4
-swift test 2>&1 | tee $work/tests.log
+swift test --force-resolved-versions 2>&1 | tee $work/tests.log
 for kind in hls dash; do
   if [[ $kind == hls ]]; then
     address=$base/hls/master.m3u8
@@ -93,11 +93,11 @@ for kind in hls dash; do
     address=$base/dash/manifest.mpd
     unset YOINK_MEDIA_EXPECTED_DURATION YOINK_MEDIA_SOURCE_MARKER
   fi
-  YOINK_MEDIA_FIXTURE_URL=$address YOINK_MEDIA_OUTPUT=$work/$kind-subtitled.mp4 swift test --filter DownloaderSubtitleTests.testAcquiredMediaSavesOriginalAndEnglishAtExpectedTimes 2>&1 | tee $work/$kind.log
+  YOINK_MEDIA_FIXTURE_URL=$address YOINK_MEDIA_OUTPUT=$work/$kind-subtitled.mp4 swift test --force-resolved-versions --filter DownloaderSubtitleTests.testAcquiredMediaSavesOriginalAndEnglishAtExpectedTimes 2>&1 | tee $work/$kind.log
 done
 if [[ ${YOINK_CHECK_LONG:-0} == 1 ]]; then
   $ffmpeg -v error -y -stream_loop -1 -i $work/site/spanish.mp4 -t 610 -c copy $work/long.mp4
-  YOINK_SUBTITLE_FIXTURE=$work/long.mp4 YOINK_SUBTITLE_OUTPUT=$work/long-subtitled.mp4 swift test --filter SubtitlePipelineTests.testNonEnglishSpeechProducesOriginalAndEnglishSoftTracks 2>&1 | tee $work/long.log
+  YOINK_SUBTITLE_FIXTURE=$work/long.mp4 YOINK_SUBTITLE_OUTPUT=$work/long-subtitled.mp4 swift test --force-resolved-versions --filter SubtitlePipelineTests.testNonEnglishSpeechProducesOriginalAndEnglishSoftTracks 2>&1 | tee $work/long.log
   $ffmpeg -v error -i $work/long-subtitled.mp4 -map 0:s:1 -f srt $work/long-english.srt
   grep -q '00:10:0' $work/long-english.srt
 fi

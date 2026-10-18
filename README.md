@@ -39,7 +39,7 @@ Yoink does not save DRM-protected (Digital Rights Management) video.
 
 ## Build
 
-The next version is 0.0.3/build 4. Its source-built FFmpeg tools replace the unverified binaries in withdrawn 0.0.2/build 3. Do not redistribute the withdrawn binaries. Publication still requires independent review and the release checks below.
+Version 0.0.3/build 4 introduced source-built FFmpeg tools to replace the unverified binaries in withdrawn 0.0.2/build 3. Do not redistribute the withdrawn binaries. Before bumping versions on `main`, complete independent review and the human release checks below.
 
 Requires macOS 14 or newer, Xcode command-line tools, CMake, and `pkg-config`. Build dependencies download over HTTPS.
 
@@ -76,18 +76,48 @@ The script uses the per-app Keychain account matching `CFBundleIdentifier`, unde
 
 The generated feed and archive both carry EdDSA signatures. `SURequireSignedFeed` and `SUVerifyUpdateBeforeExtraction` require verification before trusting feed content or extracting an archive. Do not edit a signed appcast without regenerating its signature.
 
-## Publish an approved update
+## Automatic releases
 
-Publication is separate from the local scripts and requires release approval.
+A push to `main` that changes `Resources/Info.plist` automatically publishes a stable Sparkle update when **both** version values increase. A nonversion plist edit skips publication. A partial bump, rollback, reused version/build, existing release (including a draft), or existing tag fails closed. Local build, generator, and test commands never publish.
 
-1. Complete the [license audit's distribution checks](docs/license-audit.md#distribution-hold-and-remediation). Verify the matching source, all dependency notices, and recipients' source access before publishing. Use the source-build pipeline, not the withdrawn provider binaries.
-2. Complete the update checks below on the final artifact. Verify that both version values increased against the preceding release's verified signed appcast, or the pre-release source history for the first published release. This is a required manual publication check; the local generator does not query published releases.
-3. Create a GitHub release with the tag `v` followed by `CFBundleShortVersionString`.
-4. Attach the disk image, `appcast.xml`, FFmpeg source package, and `SHA256SUMS` from the versioned `build/updates/` directory. Keep their filenames unchanged. The appcast points to this specific tag's archive, not the mutable latest archive. Keep the matching source available alongside each binary download.
-5. Publish the release as the latest stable release. `SUFeedURL` in `Resources/Info.plist` resolves its `appcast.xml` asset.
-6. Download all four assets from their published URLs. Run `shasum -a 256 -c SHA256SUMS`. Verify the appcast and disk image with Sparkle's `sign_update --verify`, using the per-app `--account`. For the disk image, supply the `sparkle:edSignature` from the appcast as the final argument. Extract the source package and compare its recipe and archive to the final app's embedded copy.
+`.github/workflows/release.yml` runs on standard GitHub-hosted `macos-15`, not a container or self-hosted machine. Standard hosted runners are free for this public repository. The workflow checks the push-before plist and verifies existing release appcasts with the unchanged per-app Sparkle key before comparing their versions. It requires a preceding stable release; there is no unsigned first-release fallback. It also checks withdrawn drafts, without republishing them.
 
-Do not publish a new latest release without its appcast. Until the first release exists, manual checks report an update retrieval error. Existing copies without Sparkle need one manual installation of the first updater-enabled release.
+The workflow resolves `Package.resolved`, uses the pinned source-built dependency pipeline with warnings as errors, runs dependency regressions and the subtitle fixture suite, and signs/notarizes the app and disk image. It checks notices and matching FFmpeg source with `Tests/Dependencies/ffmpeg-source-package.zsh`, then inspects the mounted disk image. It stages all four generated assets in a draft, downloads and verifies them, and automatically publishes that draft as latest stable at the exact triggering commit. No approval click is required. It downloads all four published assets again, checks checksums, Sparkle signatures, Developer ID signing and stapling, and compares every asset and the source package to the built copies. The source recipe and original archive are checked before publication and remain alongside each download.
+
+Runs are serialized without canceling an active signing job. Immediately before publication they recheck the `main` head and preceding latest release. A stale run fails instead of promoting an older update. Reruns do not replace releases, tags, or assets. Avoid concurrent manual release publication; GitHub has no atomic compare-and-publish operation across its branch and release APIs.
+
+### Signing secrets
+
+An owner must separately approve and configure these four GitHub Actions secrets. They are not supplied by this change. No signing secrets are accessible through a pull-request trigger.
+
+| Secret | Value |
+| --- | --- |
+| `MACOS_SIGNING_P12_BASE64` | Base64-encoded Developer ID Application certificate and private key exported as PKCS#12. |
+| `MACOS_SIGNING_P12_PASSWORD` | Password protecting that export. |
+| `SPARKLE_PRIVATE_KEY` | Existing per-app Sparkle private-key export, as base64 text. Use the Keychain account matching `CFBundleIdentifier` under `https://sparkle-project.org`. Never generate or replace the key for CI. |
+| `APPLE_NOTARY_CREDENTIALS_JSON` | JSON object with `appleID`, `appSpecificPassword`, and `teamID` string fields. |
+
+The notary JSON schema is:
+
+```json
+{"appleID":"<developer-apple-id>","appSpecificPassword":"<app-specific-password>","teamID":"<developer-team-id>"}
+```
+
+The Swift helper parses secrets from environment variables. It creates a temporary keychain, imports the certificate and existing Sparkle key, and verifies the key against `SUPublicEDKey`. Passwords travel through standard input or hidden interactive prompts, not command arguments. The notary profile is `yoink-ci`. Cleanup restores the original keychain configuration and deletes temporary credentials even after failure. No credential artifacts or caches are uploaded. A forcibly terminated hosted runner relies on the hosted VM's disposal as the final cleanup boundary.
+
+### Failure recovery and human checks
+
+Before pushing a version bump, complete the [license distribution checks](docs/license-audit.md#distribution-hold-and-remediation). Review source/notices against both architectures, recipients' source access, and license compatibility. Automation checks package consistency, not legal compliance. Changes to dependencies or notices need renewed review before a release-triggering push.
+
+The interactive update checks below, QuickTime playback, real authorized HTTPS HLS/DASH media, and minimum-supported **macOS 14 runtime testing** remain human requirements. A macOS 15 runner does not prove macOS 14 compatibility or the full Sparkle installation/relaunch experience. Complete those checks before a release-triggering bump; retain the results separately. Do not treat the workflow's synthetic fixture tests as a substitute.
+
+If a run fails before draft creation, inspect its log and correct the cause. A rerun is safe only while its triggering commit is still the `main` head and its version/tag remains unused. Otherwise push a fresh increase of both version values. If a draft or tag was left behind, an owner must inspect it and explicitly resolve the abandoned unpublished state before retrying. The workflow never deletes or overwrites it, and an incomplete draft without an appcast blocks subsequent releases. Never reuse a published version/build or remove a published tag to make a rerun pass.
+
+If postpublication verification fails, the release may already be public. Investigate immediately. An owner can withdraw it and restore a previously verified latest release, then fix forward with higher version/build values. Do not silently replace published assets. A network error after publication does not imply that nothing was published.
+
+`SUFeedURL` resolves the latest release's signed `appcast.xml`. The appcast's enclosure points to its versioned tag URL, not a mutable latest archive. Existing copies without Sparkle need one manual installation of an updater-enabled release.
+
+Run the isolated release regression checks with `zsh scripts/release/test.zsh`. They use mocked GitHub and signing tools, including failed uploads, corrupt staged assets, stale heads, changed latest releases, and successful staged/public download verification. They make no remote mutations.
 
 ## Check an update before release
 

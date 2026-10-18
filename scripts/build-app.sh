@@ -13,8 +13,8 @@ minimum_system=$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' Reso
 mkdir -p build/bin
 for arch in arm64 x86_64; do
   triple=$arch-apple-macosx$minimum_system
-  swift build -c release --triple $triple -Xswiftc -warnings-as-errors
-  bin=$(swift build -c release --triple $triple --show-bin-path)
+  swift build --force-resolved-versions -c release --triple $triple -Xswiftc -warnings-as-errors
+  bin=$(swift build --force-resolved-versions -c release --triple $triple --show-bin-path)
   cp $bin/Yoink build/bin/Yoink-$arch
 done
 sparkle=.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework

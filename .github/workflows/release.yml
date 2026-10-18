@@ -1,0 +1,56 @@
+name: Automatic Sparkle release
+
+on:
+  push:
+    branches: [main]
+    paths: [Resources/Info.plist]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stable-sparkle-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 180
+    permissions:
+      contents: write
+    env:
+      PUSH_BEFORE: ${{ github.event.before }}
+      GH_TOKEN: ${{ github.token }}
+      YOINK_NOTARY_PROFILE: yoink-ci
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Detect an actual version increase
+        id: candidate
+        run: zsh scripts/release/run.sh candidate
+      - name: Resolve pinned dependencies
+        if: steps.candidate.outputs.is_release == 'true'
+        run: |
+          command -v cmake pkg-config python3
+          swift package --force-resolved-versions resolve
+          git diff --exit-code -- Package.resolved
+      - name: Configure temporary signing credentials
+        if: steps.candidate.outputs.is_release == 'true'
+        env:
+          MACOS_SIGNING_P12_BASE64: ${{ secrets.MACOS_SIGNING_P12_BASE64 }}
+          MACOS_SIGNING_P12_PASSWORD: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          APPLE_NOTARY_CREDENTIALS_JSON: ${{ secrets.APPLE_NOTARY_CREDENTIALS_JSON }}
+        run: build/release-helper credentials
+      - name: Build, test, stage, and publish
+        if: steps.candidate.outputs.is_release == 'true'
+        run: zsh scripts/release/run.sh publish
+      - name: Remove signing credentials
+        if: always()
+        run: |
+          if [[ -x build/release-helper ]]; then
+            build/release-helper cleanup
+          fi
