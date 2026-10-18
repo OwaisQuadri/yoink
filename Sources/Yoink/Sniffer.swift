@@ -80,7 +80,11 @@ final class Sniffer: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NSW
     override init() {
         let configuration = WKWebViewConfiguration()
         configuration.mediaTypesRequiringUserActionForPlayback = []
+        #if YOINK_APP_BUNDLE
+        let scriptURL = Bundle.main.url(forResource: "Sniffer", withExtension: "js")!
+        #else
         let scriptURL = Bundle.main.url(forResource: "Sniffer", withExtension: "js") ?? Bundle.module.url(forResource: "Sniffer", withExtension: "js")!
+        #endif
         let script = try! String(contentsOf: scriptURL, encoding: .utf8)
         configuration.userContentController.addUserScript(
             WKUserScript(source: script, injectionTime: .atDocumentStart, forMainFrameOnly: false)

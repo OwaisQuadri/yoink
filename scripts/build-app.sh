@@ -13,7 +13,7 @@ minimum_system=$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' Reso
 mkdir -p build/bin
 for arch in arm64 x86_64; do
   triple=$arch-apple-macosx$minimum_system
-  swift build --force-resolved-versions -c release --triple $triple -Xswiftc -warnings-as-errors
+  swift build --force-resolved-versions -c release --triple $triple -Xswiftc -warnings-as-errors -Xswiftc -D -Xswiftc YOINK_APP_BUNDLE
   bin=$(swift build --force-resolved-versions -c release --triple $triple --show-bin-path)
   cp $bin/Yoink build/bin/Yoink-$arch
 done
