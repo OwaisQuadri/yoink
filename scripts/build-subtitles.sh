@@ -24,7 +24,7 @@ echo "$model_sha  $vendor/ggml-base.bin" | shasum -a 256 -c -
 clang -Werror -fsanitize=undefined -I $vendor/source-$revision/examples Tests/Dependencies/stb-vorbis-bounds.c -o $vendor/test-bounds
 $vendor/test-bounds
 for arch in arm64 x86_64; do
-  cmake -Werror=author -Werror=deprecated -S $vendor/source-$revision -B $vendor/build-$arch \
+  cmake -Werror=author -Wno-error=non-target-directive -Werror=deprecated -S $vendor/source-$revision -B $vendor/build-$arch \
     -DCMAKE_POLICY_VERSION_MINIMUM=3.10 -DGGML_CCACHE=OFF \
     -DCMAKE_BUILD_TYPE=Release "-DCMAKE_C_FLAGS=-Werror -ffile-prefix-map=$PWD=." "-DCMAKE_CXX_FLAGS=-Werror -ffile-prefix-map=$PWD=." \
     -DCMAKE_OSX_ARCHITECTURES=$arch -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
