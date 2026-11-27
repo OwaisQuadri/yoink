@@ -49,9 +49,10 @@ enum YoinkError: LocalizedError {
 final class Sniffer: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NSWindowDelegate {
     nonisolated static let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
     private static let adMarkers = ["doubleclick", "googlesyndication", "googleadservices", "imasdk", "dclk", "2mdn", "adservice", "/ads/", "vast", "preroll"]
-    private static let clickServer = """
+    static let clickServer = """
         const pattern = /^\\s*server\\s*\\d+\\s*$/i;
         const buttons = [...document.querySelectorAll('a, button, li, div, span')]
+            .filter((element) => !element.closest('a[target="_blank"]'))
             .filter((element) => pattern.test(element.textContent || ''))
             .filter((element) => ![...element.querySelectorAll('*')].some((child) => pattern.test(child.textContent || '')));
         if (index >= buttons.length) return false;
