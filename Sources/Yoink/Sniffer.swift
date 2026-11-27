@@ -33,13 +33,14 @@ struct FoundMedia {
 
 enum YoinkError: LocalizedError {
     case noVideo
-    case unreachable
+    case unreachable(host: String?)
     case downloadFailed(String)
 
     var errorDescription: String? {
         switch self {
         case .noVideo: "Couldn’t find a video on this page"
-        case .unreachable: "The video’s servers can’t be reached on this network"
+        case .unreachable(let host?): "This network can’t reach \(host), which hosts this video. Try another connection, like your phone’s hotspot."
+        case .unreachable(nil): "This network can’t reach the video’s servers. Try another connection, like your phone’s hotspot."
         case .downloadFailed(let reason): reason
         }
     }
@@ -49,9 +50,10 @@ enum YoinkError: LocalizedError {
 final class Sniffer: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NSWindowDelegate {
     nonisolated static let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
     private static let adMarkers = ["doubleclick", "googlesyndication", "googleadservices", "imasdk", "dclk", "2mdn", "adservice", "/ads/", "vast", "preroll"]
-    private static let clickServer = """
+    static let clickServer = """
         const pattern = /^\\s*server\\s*\\d+\\s*$/i;
         const buttons = [...document.querySelectorAll('a, button, li, div, span')]
+            .filter((element) => !element.closest('a[target="_blank"]'))
             .filter((element) => pattern.test(element.textContent || ''))
             .filter((element) => ![...element.querySelectorAll('*')].some((child) => pattern.test(child.textContent || '')));
         if (index >= buttons.length) return false;
@@ -74,6 +76,7 @@ final class Sniffer: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NSW
     var onPageClosed: (() -> Void)?
     private var candidates: [Candidate] = []
     private var captions: [(track: RemoteSubtitle, documentID: String, videoID: String)] = []
+    private var frameURLs: [URL] = []
     private var firstFreshCandidate = 0
     private var startSite = ""
 
@@ -99,6 +102,7 @@ final class Sniffer: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NSW
     func find(_ pageURL: URL) async throws -> FoundMedia {
         candidates = []
         captions = []
+        frameURLs = []
         firstFreshCandidate = 0
         startSite = Self.site(pageURL.host)
         webView.load(URLRequest(url: pageURL))
@@ -150,7 +154,9 @@ final class Sniffer: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NSW
                 lastClick = Date()
             }
         }
-        throw isAnyServerSeen ? YoinkError.unreachable : YoinkError.noVideo
+        let tested = (candidates.map(\.url) + frameURLs).filter { Self.site($0.host) != startSite && !Self.isAd($0) }
+        if let host = await Downloader.firstUnreachableHost(tested) { throw YoinkError.unreachable(host: host) }
+        throw isAnyServerSeen ? YoinkError.unreachable(host: nil) : YoinkError.noVideo
     }
 
     private func clickCenter() {
@@ -216,6 +222,7 @@ final class Sniffer: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NSW
         hidePage()
         candidates = []
         captions = []
+        frameURLs = []
         webView.load(URLRequest(url: URL(string: "about:blank")!))
     }
 
@@ -237,13 +244,15 @@ final class Sniffer: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NSW
     }
 
     private func best() -> Candidate? {
-        let usable = candidates[firstFreshCandidate...].filter { candidate in
-            let text = candidate.url.absoluteString.lowercased()
-            return !Self.adMarkers.contains { text.contains($0) }
-        }
+        let usable = candidates[firstFreshCandidate...].filter { !Self.isAd($0.url) }
         func score(_ candidate: Candidate) -> Int { Self.rank(candidate) * 2 + (candidate.kind == "video" ? 1 : 0) }
         let top = usable.map(score).max()
         return usable.first { score($0) == top }
+    }
+
+    private static func isAd(_ url: URL) -> Bool {
+        let text = url.absoluteString.lowercased()
+        return adMarkers.contains { text.contains($0) }
     }
 
     private static func rank(_ candidate: Candidate) -> Int {
@@ -269,6 +278,7 @@ final class Sniffer: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NSW
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
+        if action.targetFrame?.isMainFrame == false, let url = action.request.url, url.scheme?.hasPrefix("http") == true { frameURLs.append(url) }
         guard action.targetFrame?.isMainFrame == true, let host = action.request.url?.host else { return .allow }
         return Self.site(host) == startSite ? .allow : .cancel
     }

@@ -48,6 +48,30 @@ enum Downloader {
         throw lastError
     }
 
+    static func firstUnreachableHost(_ urls: [URL]) async -> String? {
+        var hosts = Set<String>()
+        let tested = urls.filter { hosts.insert($0.host ?? "").inserted }
+        let failed = await withTaskGroup(of: (index: Int, host: String?)?.self) { group in
+            for (index, url) in tested.enumerated() {
+                group.addTask {
+                    var request = URLRequest(url: url, timeoutInterval: 8)
+                    request.httpMethod = "HEAD"
+                    request.setValue(Sniffer.userAgent, forHTTPHeaderField: "User-Agent")
+                    do {
+                        _ = try await URLSession.shared.data(for: request)
+                        return nil
+                    } catch let error as URLError where error.code == .appTransportSecurityRequiresSecureConnection {
+                        return nil
+                    } catch {
+                        return (index, (error as? URLError)?.failingURL?.host ?? url.host)
+                    }
+                }
+            }
+            return await group.compactMap { $0 }.min { $0.index < $1.index }
+        }
+        return failed?.host
+    }
+
     static func get(_ media: FoundMedia, _ url: URL, range: Range<Int>? = nil, isProbe: Bool = false) async throws -> (data: Data, total: Int?, isPartial: Bool) {
         if let fetcher = media.fetcher {
             var lastError: Error = YoinkError.downloadFailed("Download failed")
