@@ -60,6 +60,8 @@ enum Downloader {
                     do {
                         _ = try await URLSession.shared.data(for: request)
                         return nil
+                    } catch let error as URLError where error.code == .appTransportSecurityRequiresSecureConnection {
+                        return nil
                     } catch {
                         return (index, (error as? URLError)?.failingURL?.host ?? url.host)
                     }
