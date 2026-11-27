@@ -51,7 +51,7 @@ enum Downloader {
     static func firstUnreachableHost(_ urls: [URL]) async -> String? {
         var hosts = Set<String>()
         let tested = urls.filter { hosts.insert($0.host ?? "").inserted }
-        let failed = await withTaskGroup(of: Int?.self) { group in
+        let failed = await withTaskGroup(of: (index: Int, host: String?)?.self) { group in
             for (index, url) in tested.enumerated() {
                 group.addTask {
                     var request = URLRequest(url: url, timeoutInterval: 8)
@@ -61,13 +61,13 @@ enum Downloader {
                         _ = try await URLSession.shared.data(for: request)
                         return nil
                     } catch {
-                        return index
+                        return (index, (error as? URLError)?.failingURL?.host ?? url.host)
                     }
                 }
             }
-            return await group.compactMap { $0 }.min()
+            return await group.compactMap { $0 }.min { $0.index < $1.index }
         }
-        return failed.flatMap { tested[$0].host }
+        return failed?.host
     }
 
     static func get(_ media: FoundMedia, _ url: URL, range: Range<Int>? = nil, isProbe: Bool = false) async throws -> (data: Data, total: Int?, isPartial: Bool) {
